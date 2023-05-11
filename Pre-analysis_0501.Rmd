@@ -1,0 +1,215 @@
+---
+title: "Pre-analyis"
+author: "Siwei Wu"
+date: "2023/3/8"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+It's a pre-analysis script for lasso regression. Copy the codes in this script to the start of your script for analysis.
+(1) We choose variables which will be used for lasso, and get rid of the unnecessary ones, like sex and data of enrollment.
+(2) We transform all categorical variables into ordinal variables(integer):
+  2.1 For variables with only two levels, they are encoded as 0 or 1
+  2.2 For variables with more than 2 levels, they are encoded as 1, 2, 3, and so on 
+You may need to do some changes if you are going to run other models. For instance, when running univariate logistic, you still keep binary variables to be factor.
+
+
+
+```{r}
+# set up working directory
+rm(list=ls())
+path <- dirname(rstudioapi::getActiveDocumentContext()$path)
+setwd(path)
+
+# load packages
+library(tidyverse)
+library(dplyr)
+library(RColorBrewer)
+library(mice)
+library(OpenMx)
+library(igraph)
+library(sharp)
+library(fake)
+rm(path)
+
+# Read in dataset 
+ukb = readRDS("ukb_0501.rds")
+```
+
+
+# Pre-analysis
+## Transform factors to ordinal variables
+```{r}
+# Re-code Sleep_snoring.0.0 and Female_Ever_use_HRT.0.0 (binary variables)
+ukb$Sleep_snoring.0.0 = ifelse(ukb$Sleep_snoring.0.0=="No", 0, 1)
+ukb$Female_Ever_use_HRT.0.0 = ifelse(ukb$Female_Ever_use_HRT.0.0=="No", 0, 1)
+
+# Select factor variables
+ukb_cate= ukb %>% select(eid, is.factor)
+
+# Transform factors into ordinal variables
+ukb_ordinal = as.data.frame(lapply(ukb_cate, as.numeric))
+  
+# Select non factor variables
+ukb_nonfactor = ukb %>% select(-is.factor)
+ukb_nonfactor$eid = as.numeric(ukb$eid)
+
+# Merge
+ukb = inner_join(ukb_ordinal, ukb_nonfactor)
+
+rm(ukb_cate, ukb_ordinal, ukb_nonfactor)
+```
+
+## factor binary variables(only for univariate analysis)
+```{r}
+## factor binary variables(only for univariate variables)
+# ukb$Sleep_snoring.0.0 = factor(ukb$Sleep_snoring.0.0)
+# ukb$Mother_breast_cancer = factor(ukb$Mother_breast_cancer)
+# ukb$Mother_cancer = factor(ukb$Mother_cancer)
+# ukb$Mother_breast_cancer = factor(ukb$Mother_breast_cancer)
+# ukb$Mother_cancer = factor(ukb$Mother_cancer)
+# ukb$Female_Menopause_no = factor(ukb$Female_Menopause_no )
+# ukb$Female_Menopause_unsure = factor(ukb$Female_Menopause_unsure)
+# ukb$Female_Menopause_yes = factor(ukb$Female_Menopause_yes)
+# ukb$Female_Ever_use_HRT.0.0 = factor(ukb$Female_Ever_use_HRT.0.0)
+# rm(ukb_cate, ukb_ordinal, ukb_nonfactor)
+```
+
+## Transform logical variables into numeric
+```{r}
+ukb$Mother_breast_cancer = as.numeric(ukb$Mother_breast_cancer)
+```
+
+## Pick up variables necessary for analysis and reorder the variables
+```{r}
+rownames(ukb) = ukb$eid
+ukb = ukb %>% select(-eid)
+
+# Re-arrange the  variables
+## Biochemical metrics
+sex_horm = c("Bio_shbg.0.0","Bio_testosterone.0.0")
+glucose = c("Bio_glucose.0.0", "Bio_glycated_haemoglobin.0.0", "Bio_igf_1.0.0")
+liver = c("Bio_alkaline_phosphate.0.0", "Bio_alanine_aminotransferase.0.0", "Bio_aspartate_aminotransferase.0.0", "Bio_direct_bilirubin.0.0", "Bio_gamma_glutamyltransferase.0.0", "Bio_total_bilirubin.0.0")
+lipid = c("Bio_apolipoprotein_a.0.0", "Bio_apolipoprotein_b.0.0", "Bio_cholesterol.0.0", "Bio_hdl_cholesterol.0.0", "Bio_ldl_direct.0.0", "Bio_lipoprotein_a.0.0", "Bio_triglycerides.0.0")
+nutrit = c("Bio_albumin.0.0", "Bio_total_protein.0.0")
+inflam = c("Bio_c_reac_protein.0.0")
+urate = c("Bio_urate.0.0")
+skeleton = c("Bio_calcium.0.0", "Bio_phosphate.0.0", "Bio_vitamin_d.0.0")
+kidney = c("Bio_urea.0.0", "Bio_creatinine.0.0", "Bio_cystatin_c.0.0")
+
+## Physical Measurement, environment, and demographic variables
+# PhyMeas = c("phyMeas_SBP", "phyMeas_DBP", "PhyMeas_waist_cir.0.0", "PhyMeas_BMI.0.0")
+PhyMeas = c("PhyMeas_BMI.0.0", "phyMeas_SBP", "phyMeas_DBP")
+demo = c("Age_enrollment.0.0", "income_household.0.0", "Education","Employment_no_or_cnt_wk","Employment_paid_or_sf_emply","Employment_unpaid_wk_or_funded")
+PhyAC = c("Days_WK_PhyAc.0.0")
+envir = c("no2_air_pol.0.0","no_air_pol.0.0")
+
+ukb = ukb %>% select(
+  all_of(demo), 
+  starts_with("Female_"), 
+  starts_with("Mother_"), 
+  envir, 
+  PhyAC,
+  starts_with("Sleep_"), 
+  starts_with("Smoke_"), 
+  starts_with("Alcohol_"), 
+  starts_with("Diet_"), 
+  all_of(PhyMeas),
+  all_of(sex_horm), 
+  all_of(glucose), 
+  all_of(liver), 
+  all_of(lipid), 
+  all_of(nutrit), 
+  all_of(inflam), 
+  all_of(urate), 
+  all_of(skeleton), 
+  all_of(kidney), 
+  starts_with("Urine_"),
+  breast_incident_case,
+  uterus_incident_case, 
+  ovary_incident_case, 
+  # others_incident_case, 
+  femalecancer_incident_case)
+
+rm(PhyMeas, demo, envir, sex_horm, glucose, liver, lipid, nutrit, inflam, urate, skeleton, kidney)
+
+```
+
+Binary variabels
+```{r}
+# To decide whether scale binary variables or not: the following are binary variables 
+# Binary_variable = c("Employment_no_or_cnt_wk", "Employment_paid_or_sf_emply", "Employment_unpaid_wk_or_funded", "Female_Ever_use_HRT.0.0", "Female_Menopause_no", "Female_Menopause_unsure", "Female_Menopause_yes", "Mother_breast_cancer")
+```
+
+Create data set for each cancer
+```{r}
+# Female cancer
+ukb_female = ukb %>% select(-ovary_incident_case, -uterus_incident_case, -breast_incident_case)
+# ukb_female = ukb %>% select(-ovary_incident_case, -uterus_incident_case, -others_incident_case, -breast_incident_case)
+
+# Factor Outcome
+ukb_female$femalecancer_incident_case = factor(ukb_female$femalecancer_incident_case)
+
+# Split X and Y
+ukb_female_x = as.matrix(ukb_female %>% select(-femalecancer_incident_case))
+ukb_female_x = scale(ukb_female_x)
+ukb_female_y = as.matrix(ukb_female %>% select(femalecancer_incident_case))
+```
+
+```{r}
+# Breast cancer
+# ukb_breast = ukb %>% filter(uterus_incident_case == 0 | breast_incident_case==1) %>% 
+#   filter(ovary_incident_case == 0 | breast_incident_case==1) %>% 
+#   filter(others_incident_case == 0| breast_incident_case==1) %>% 
+#   select(-ovary_incident_case, -uterus_incident_case, -others_incident_case,-femalecancer_incident_case)
+ukb_breast = ukb %>% filter(uterus_incident_case == 0 | breast_incident_case==1) %>% 
+  filter(ovary_incident_case == 0 | breast_incident_case==1) %>% 
+  select(-ovary_incident_case, -uterus_incident_case,-femalecancer_incident_case)
+
+# Factor Outcome
+ukb_breast$breast_incident_case = factor(ukb_breast$breast_incident_case)
+
+# Split X and Y
+ukb_breast_x = as.matrix(ukb_breast %>% select(-breast_incident_case))
+ukb_breast_x = scale(ukb_breast_x)
+ukb_breast_y = as.matrix(ukb_breast %>% select(breast_incident_case))
+
+```
+
+```{r}
+# Ovary cancer
+# ukb_ovary = ukb %>% filter(uterus_incident_case == 0 | ovary_incident_case == 1 ) %>%
+#   filter(breast_incident_case == 0 | ovary_incident_case == 1 ) %>%
+#   filter(others_incident_case == 0 | ovary_incident_case == 1 ) %>%
+#   select(-breast_incident_case, -uterus_incident_case, -others_incident_case,-femalecancer_incident_case)
+ukb_ovary = ukb %>% filter(uterus_incident_case == 0 | ovary_incident_case == 1 ) %>%
+  filter(breast_incident_case == 0 | ovary_incident_case == 1 ) %>%
+  select(-breast_incident_case, -uterus_incident_case,-femalecancer_incident_case)
+
+# Factor Outcome
+ukb_ovary$ovary_incident_case = factor(ukb_ovary$ovary_incident_case)
+
+# Split X and Y
+ukb_ovary_x = as.matrix(ukb_ovary %>% select(-ovary_incident_case))
+ukb_ovary_x = scale(ukb_ovary_x)
+ukb_ovary_y = as.matrix(ukb_ovary %>% select(ovary_incident_case))
+```
+
+```{r}
+# Uterus cancer
+# ukb_uterus = ukb %>% filter(breast_incident_case == 0 | uterus_incident_case==1) %>% filter(ovary_incident_case == 0| uterus_incident_case==1) %>% filter(others_incident_case == 0| uterus_incident_case==1) %>% select(-ovary_incident_case, -breast_incident_case, -others_incident_case,-femalecancer_incident_case)
+ukb_uterus = ukb %>% filter(breast_incident_case == 0 | uterus_incident_case==1) %>% 
+  filter(ovary_incident_case == 0| uterus_incident_case==1) %>% 
+  select(-ovary_incident_case, -breast_incident_case,-femalecancer_incident_case)
+# Factor Outcome
+ukb_uterus$uterus_incident_case = factor(ukb_uterus$uterus_incident_case)
+
+# Split X and Y
+ukb_uterus_x = as.matrix(ukb_uterus %>% select(-uterus_incident_case))
+ukb_uterus_x = scale(ukb_uterus_x)
+ukb_uterus_y = as.matrix(ukb_uterus %>% select(uterus_incident_case))
+```
