@@ -1,0 +1,849 @@
+---
+title: "TDS_Prediction"
+date: "11/05/2023"
+output: html_document
+---
+
+
+##Prediction model
+### Refit with train data
+```{r}
+ukb_train = readRDS("ukb_train_0501.rds")
+```
+
+
+# Pre-analysis
+## Transform factors to ordinal variables
+```{r}
+# Re-code Sleep_snoring.0.0 and Female_Ever_use_HRT.0.0 (binary variables)
+ukb_train$Sleep_snoring.0.0 = ifelse(ukb_train$Sleep_snoring.0.0=="No", 0, 1)
+ukb_train$Female_Ever_use_HRT.0.0 = ifelse(ukb_train$Female_Ever_use_HRT.0.0=="No", 0, 1)
+
+# Select factor variables
+ukb_cate_train= ukb_train %>% select(eid, is.factor)
+
+# Transform factors into ordinal variables
+ukb_ordinal_train = as.data.frame(lapply(ukb_cate_train, as.numeric))
+  
+# Select non factor variables
+ukb_nonfactor_train = ukb_train %>% select(-is.factor)
+ukb_nonfactor_train$eid = as.numeric(ukb_train$eid)
+
+# Merge
+ukb_train = inner_join(ukb_ordinal_train, ukb_nonfactor_train)
+
+rm(ukb_cate_train, ukb_ordinal_train, ukb_nonfactor_train)
+```
+
+
+
+## Transform logical variables into numeric
+```{r}
+ukb_train$Mother_breast_cancer = as.numeric(ukb_train$Mother_breast_cancer)
+```
+
+## Pick up variables necessary for analysis and reorder the variables
+```{r}
+rownames(ukb_train) = ukb_train$eid
+ukb_train = ukb_train %>% select(-eid)
+
+# Re-arrange the  variables
+## Biochemical metrics
+sex_horm = c("Bio_shbg.0.0","Bio_testosterone.0.0")
+glucose = c("Bio_glucose.0.0", "Bio_glycated_haemoglobin.0.0", "Bio_igf_1.0.0")
+liver = c("Bio_alkaline_phosphate.0.0", "Bio_alanine_aminotransferase.0.0", "Bio_aspartate_aminotransferase.0.0", "Bio_direct_bilirubin.0.0", "Bio_gamma_glutamyltransferase.0.0", "Bio_total_bilirubin.0.0")
+lipid = c("Bio_apolipoprotein_a.0.0", "Bio_apolipoprotein_b.0.0", "Bio_cholesterol.0.0", "Bio_hdl_cholesterol.0.0", "Bio_ldl_direct.0.0", "Bio_lipoprotein_a.0.0", "Bio_triglycerides.0.0")
+nutrit = c("Bio_albumin.0.0", "Bio_total_protein.0.0")
+inflam = c("Bio_c_reac_protein.0.0")
+urate = c("Bio_urate.0.0")
+skeleton = c("Bio_calcium.0.0", "Bio_phosphate.0.0", "Bio_vitamin_d.0.0")
+kidney = c("Bio_urea.0.0", "Bio_creatinine.0.0", "Bio_cystatin_c.0.0")
+
+## Physical Measurement, environment, and demographic variables
+# PhyMeas = c("phyMeas_SBP", "phyMeas_DBP", "PhyMeas_waist_cir.0.0", "PhyMeas_BMI.0.0")
+PhyMeas = c("PhyMeas_BMI.0.0", "phyMeas_SBP", "phyMeas_DBP")
+demo = c("Age_enrollment.0.0", "income_household.0.0", "Education","Employment_no_or_cnt_wk","Employment_paid_or_sf_emply","Employment_unpaid_wk_or_funded")
+PhyAC = c("Days_WK_PhyAc.0.0")
+envir = c("no2_air_pol.0.0","no_air_pol.0.0")
+
+ukb_train = ukb_train %>% select(
+  all_of(demo), 
+  starts_with("Female_"), 
+  starts_with("Mother_"), 
+  envir, 
+  PhyAC,
+  starts_with("Sleep_"), 
+  starts_with("Smoke_"), 
+  starts_with("Alcohol_"), 
+  starts_with("Diet_"), 
+  all_of(PhyMeas),
+  all_of(sex_horm), 
+  all_of(glucose), 
+  all_of(liver), 
+  all_of(lipid), 
+  all_of(nutrit), 
+  all_of(inflam), 
+  all_of(urate), 
+  all_of(skeleton), 
+  all_of(kidney), 
+  starts_with("Urine_"),
+  breast_incident_case,
+  uterus_incident_case, 
+  ovary_incident_case, 
+  # others_incident_case, 
+  femalecancer_incident_case)
+
+rm(PhyMeas, demo, envir, sex_horm, glucose, liver, lipid, nutrit, inflam, urate, skeleton, kidney)
+
+
+```
+
+
+
+
+```{r}
+# Female cancer
+ukb_female_train = ukb_train %>% select(-ovary_incident_case, -uterus_incident_case, -breast_incident_case)
+
+# Split X and Y
+ukb_female_train_x = as.matrix(ukb_female_train %>% select(-femalecancer_incident_case))
+
+ukb_female_train_x = scale(ukb_female_train_x)
+ukb_female_train_y = as.matrix(ukb_female_train %>% select(femalecancer_incident_case))
+```
+
+```{r}
+# Breast cancer
+
+ukb_breast_train = ukb_train %>% filter(uterus_incident_case == 0 | breast_incident_case==1) %>% 
+  filter(ovary_incident_case == 0 | breast_incident_case==1) %>% 
+  select(-ovary_incident_case, -uterus_incident_case,-femalecancer_incident_case)
+
+# Factor Outcome
+ukb_breast_train$breast_incident_case = factor(ukb_breast_train$breast_incident_case)
+
+# Split X and Y
+ukb_breast_train_x = as.matrix(ukb_breast_train %>% select(-breast_incident_case))
+ukb_breast_train_x = scale(ukb_breast_train_x)
+ukb_breast_train_y = as.matrix(ukb_breast_train %>% select(breast_incident_case))
+
+```
+
+```{r}
+# Ovary cancer
+
+ukb_ovary_train = ukb_train %>% filter(uterus_incident_case == 0 | ovary_incident_case == 1 ) %>%
+  filter(breast_incident_case == 0 | ovary_incident_case == 1 ) %>%
+  select(-breast_incident_case, -uterus_incident_case,-femalecancer_incident_case)
+
+# Factor Outcome
+ukb_ovary_train$ovary_incident_case = factor(ukb_ovary_train$ovary_incident_case)
+
+# Split X and Y
+ukb_ovary_train_x = as.matrix(ukb_ovary_train %>% select(-ovary_incident_case))
+ukb_ovary_train_x = scale(ukb_ovary_train_x)
+ukb_ovary_train_y = as.matrix(ukb_ovary_train %>% select(ovary_incident_case))
+```
+
+```{r}
+# Uterus cancer
+
+ukb_uterus_train = ukb_train %>% filter(breast_incident_case == 0 | uterus_incident_case==1) %>% 
+  filter(ovary_incident_case == 0| uterus_incident_case==1) %>% 
+  select(-ovary_incident_case, -breast_incident_case,-femalecancer_incident_case)
+
+# Factor Outcome
+ukb_uterus_train$uterus_incident_case = factor(ukb_uterus_train$uterus_incident_case)
+
+# Split X and Y
+ukb_uterus_train_x = as.matrix(ukb_uterus_train %>% select(-uterus_incident_case))
+ukb_uterus_train_x = scale(ukb_uterus_train_x)
+ukb_uterus_train_y = as.matrix(ukb_uterus_train %>% select(uterus_incident_case))
+```
+
+
+## Refit with stably selected variable
+Refit
+```{r}
+varSel_female_refit_train=Refit(ukb_female_train_x, ukb_female_train_y, family = "binomial", stability = varSel_female)
+
+varSel_breast_refit_train=Refit(ukb_breast_train_x, ukb_breast_train_y, family = "binomial", stability = varSel_breast)
+
+varSel_uterus_refit_train=Refit(ukb_uterus_train_x, ukb_uterus_train_y, family = "binomial", stability = varSel_uterus)
+
+varSel_ovary_refit_train=Refit(ukb_ovary_train_x, ukb_ovary_train_y, family = "binomial", stability = varSel_ovary)
+
+#rm(ukb_female_x_train, ukb_female_y_train, ukb_female_train, ukb_breast_x_train, ukb_breast_y_train, ukb_breast_train, ukb_ovary_x_train, ukb_ovary_y_train, ukb_ovary_train, ukb_uterus_x_train, ukb_uterus_y_train, ukb_uterus_train, ukb_train)
+```
+
+Result of refit 
+```{r}
+varSel_female_coef_train = as.data.frame(varSel_female_refit_train$coefficients[-1])
+colnames(varSel_female_coef_train) = "coef_female"
+varSel_female_coef_train$var = rownames(varSel_female_coef_train)
+
+varSel_breast_coef_train = as.data.frame(varSel_breast_refit_train$coefficients[-1])
+colnames(varSel_breast_coef_train) = "coef_breast"
+varSel_breast_coef_train$var = rownames(varSel_breast_coef_train)
+
+varSel_uterus_coef_train = as.data.frame(varSel_uterus_refit_train$coefficients[-1])
+colnames(varSel_uterus_coef_train) = "coef_uterus"
+varSel_uterus_coef_train$var = rownames(varSel_uterus_coef_train)
+
+varSel_ovary_coef_train = as.data.frame(varSel_ovary_refit_train$coefficients[-1])
+colnames(varSel_ovary_coef_train) = "coef_ovary"
+varSel_ovary_coef_train$var = rownames(varSel_ovary_coef_train)
+
+rm(varSel_female_refit_train, varSel_breast_refit_train, varSel_uterus_refit_train, varSel_ovary_refit_train)
+```
+
+
+## Effect size of variables passing stability selection 
+```{r}
+# Merge selection proportion and effect size
+selprop$var = rownames(selprop)
+selprop = left_join(selprop, varSel_female_coef_train, by=c("var"="var"))
+selprop = left_join(selprop, varSel_breast_coef_train, by=c("var"="var"))
+selprop = left_join(selprop, varSel_uterus_coef_train, by=c("var"="var"))
+selprop = left_join(selprop, varSel_ovary_coef_train, by=c("var"="var"))
+rownames(selprop)=selprop$var
+selprop = selprop %>% select(-var)
+rm(varSel_female_coef, varSel_breast_coef, varSel_uterus_coef, varSel_ovary_coef)
+
+
+# Renames rownames
+rownames(selprop) = sub(".0.0", "", rownames(selprop))
+rownames(selprop) = gsub("_", " ", rownames(selprop))
+
+```
+
+
+
+##Prediction
+
+#Preanalysis of test data
+### Refit with train data
+```{r}
+ukb_test = readRDS("ukb_test_0501.rds")
+```
+
+
+# Pre-analysis
+## Transform factors to ordinal variables
+```{r}
+# Re-code Sleep_snoring.0.0 and Female_Ever_use_HRT.0.0 (binary variables)
+ukb_test$Sleep_snoring.0.0 = ifelse(ukb_test$Sleep_snoring.0.0=="No", 0, 1)
+ukb_test$Female_Ever_use_HRT.0.0 = ifelse(ukb_test$Female_Ever_use_HRT.0.0=="No", 0, 1)
+
+# Select factor variables
+ukb_cate_test= ukb_test %>% select(eid, is.factor)
+
+# Transform factors into ordinal variables
+ukb_ordinal_test = as.data.frame(lapply(ukb_cate_test, as.numeric))
+  
+# Select non factor variables
+ukb_nonfactor_test = ukb_test %>% select(-is.factor)
+ukb_nonfactor_test$eid = as.numeric(ukb_test$eid)
+
+# Merge
+ukb_test = inner_join(ukb_ordinal_test, ukb_nonfactor_test)
+
+rm(ukb_cate_test, ukb_ordinal_test, ukb_nonfactor_test)
+```
+
+
+
+## Transform logical variables into numeric
+```{r}
+ukb_test$Mother_breast_cancer = as.numeric(ukb_test$Mother_breast_cancer)
+```
+
+## Pick up variables necessary for analysis and reorder the variables
+```{r}
+rownames(ukb_test) = ukb_test$eid
+ukb_test = ukb_test %>% select(-eid)
+
+# Re-arrange the  variables
+## Biochemical metrics
+sex_horm = c("Bio_shbg.0.0","Bio_testosterone.0.0")
+glucose = c("Bio_glucose.0.0", "Bio_glycated_haemoglobin.0.0", "Bio_igf_1.0.0")
+liver = c("Bio_alkaline_phosphate.0.0", "Bio_alanine_aminotransferase.0.0", "Bio_aspartate_aminotransferase.0.0", "Bio_direct_bilirubin.0.0", "Bio_gamma_glutamyltransferase.0.0", "Bio_total_bilirubin.0.0")
+lipid = c("Bio_apolipoprotein_a.0.0", "Bio_apolipoprotein_b.0.0", "Bio_cholesterol.0.0", "Bio_hdl_cholesterol.0.0", "Bio_ldl_direct.0.0", "Bio_lipoprotein_a.0.0", "Bio_triglycerides.0.0")
+nutrit = c("Bio_albumin.0.0", "Bio_total_protein.0.0")
+inflam = c("Bio_c_reac_protein.0.0")
+urate = c("Bio_urate.0.0")
+skeleton = c("Bio_calcium.0.0", "Bio_phosphate.0.0", "Bio_vitamin_d.0.0")
+kidney = c("Bio_urea.0.0", "Bio_creatinine.0.0", "Bio_cystatin_c.0.0")
+
+## Physical Measurement, environment, and demographic variables
+# PhyMeas = c("phyMeas_SBP", "phyMeas_DBP", "PhyMeas_waist_cir.0.0", "PhyMeas_BMI.0.0")
+PhyMeas = c("PhyMeas_BMI.0.0", "phyMeas_SBP", "phyMeas_DBP")
+demo = c("Age_enrollment.0.0", "income_household.0.0", "Education","Employment_no_or_cnt_wk","Employment_paid_or_sf_emply","Employment_unpaid_wk_or_funded")
+PhyAC = c("Days_WK_PhyAc.0.0")
+envir = c("no2_air_pol.0.0","no_air_pol.0.0")
+
+ukb_test = ukb_test %>% select(
+  all_of(demo), 
+  starts_with("Female_"), 
+  starts_with("Mother_"), 
+  envir, 
+  PhyAC,
+  starts_with("Sleep_"), 
+  starts_with("Smoke_"), 
+  starts_with("Alcohol_"), 
+  starts_with("Diet_"), 
+  all_of(PhyMeas),
+  all_of(sex_horm), 
+  all_of(glucose), 
+  all_of(liver), 
+  all_of(lipid), 
+  all_of(nutrit), 
+  all_of(inflam), 
+  all_of(urate), 
+  all_of(skeleton), 
+  all_of(kidney), 
+  starts_with("Urine_"),
+  breast_incident_case,
+  uterus_incident_case, 
+  ovary_incident_case, 
+  # others_incident_case, 
+  femalecancer_incident_case)
+
+rm(PhyMeas, demo, envir, sex_horm, glucose, liver, lipid, nutrit, inflam, urate, skeleton, kidney)
+
+```
+
+
+```{r}
+# Female cancer
+ukb_female_test = ukb_test %>% select(-ovary_incident_case, -uterus_incident_case, -breast_incident_case)
+
+
+# Split X and Y
+ukb_female_test_x = as.matrix(ukb_female_test %>% select(-femalecancer_incident_case))
+ukb_female_test_x = scale(ukb_female_test_x)
+ukb_female_test_y = as.matrix(ukb_female_test %>% select(femalecancer_incident_case))
+```
+
+```{r}
+# Breast cancer
+
+ukb_breast_test = ukb_test %>% filter(uterus_incident_case == 0 | breast_incident_case==1) %>% 
+  filter(ovary_incident_case == 0 | breast_incident_case==1) %>% 
+  select(-ovary_incident_case, -uterus_incident_case,-femalecancer_incident_case)
+
+# Factor Outcome
+ukb_breast_test$breast_incident_case = factor(ukb_breast_test$breast_incident_case)
+
+# Split X and Y
+ukb_breast_test_x = as.matrix(ukb_breast_test %>% select(-breast_incident_case))
+ukb_breast_test_x = scale(ukb_breast_test_x)
+ukb_breast_test_y = as.matrix(ukb_breast_test %>% select(breast_incident_case))
+
+```
+
+```{r}
+# Ovary cancer
+
+ukb_ovary_test = ukb_test %>% filter(uterus_incident_case == 0 | ovary_incident_case == 1 ) %>%
+  filter(breast_incident_case == 0 | ovary_incident_case == 1 ) %>%
+  select(-breast_incident_case, -uterus_incident_case,-femalecancer_incident_case)
+
+# Factor Outcome
+ukb_ovary_test$ovary_incident_case = factor(ukb_ovary_test$ovary_incident_case)
+
+# Split X and Y
+ukb_ovary_test_x = as.matrix(ukb_ovary_test %>% select(-ovary_incident_case))
+ukb_ovary_test_x = scale(ukb_ovary_test_x)
+ukb_ovary_test_y = as.matrix(ukb_ovary_test %>% select(ovary_incident_case))
+```
+
+```{r}
+# Uterus cancer
+
+ukb_uterus_test = ukb_test %>% filter(breast_incident_case == 0 | uterus_incident_case==1) %>% 
+  filter(ovary_incident_case == 0| uterus_incident_case==1) %>% 
+  select(-ovary_incident_case, -breast_incident_case,-femalecancer_incident_case)
+
+# Factor Outcome
+ukb_uterus_test$uterus_incident_case = factor(ukb_uterus_test$uterus_incident_case)
+
+# Split X and Y
+ukb_uterus_test_x = as.matrix(ukb_uterus_test %>% select(-uterus_incident_case))
+ukb_uterus_test_x = scale(ukb_uterus_test_x)
+ukb_uterus_test_y = as.matrix(ukb_uterus_test %>% select(uterus_incident_case))
+```
+
+
+
+```{r}
+yhat <- predict(
+varSel_female,
+xdata = ukb_female_train_x, 
+ydata = ukb_female_train_y ,
+newdata = ukb_female_test,
+method = "refit",
+family = "binomial", type = "response"
+)
+```
+```{r}
+plot(ROC(predicted = yhat, observed = ukb_female_test))
+```
+
+
+```{r}
+roc<-ExplanatoryPerformance(
+xdata = ukb_female_train_x, 
+ydata = ukb_female_train_y ,
+new_xdata = ukb_female_test_x,
+new_ydata = ukb_female_test_y,
+stability = varSel_female,
+family =  "binomial",
+implementation = NULL,
+prediction = NULL,
+resampling = "subsampling",
+K = 1,
+seed = 1,
+verbose = FALSE,
+)
+```
+
+
+
+```{r}
+mean(roc$TPR)
+mean(roc$FPR)
+roc$TPR
+roc$AUC
+plot(roc)
+```
+```{r}
+
+#Incremental(
+#xdata = ukb_female_train_x, 
+#ydata = ukb_female_train_y ,
+#new_xdata = ukb_female_test_x,
+#new_ydata = ukb_female_test_y,
+#stability = varSel_female,
+#family =  "binomial",
+#implementation = NULL,
+#prediction = NULL,
+#resampling = "subsampling",
+#n_predictors = 20,
+#K = NULL,
+#tau = NULL,
+#seed = 1,
+#n_thr = NULL
+#)
+
+```
+
+
+```{r}
+rocbre<-ExplanatoryPerformance(
+xdata = ukb_breast_train_x, 
+ydata = ukb_breast_train_y ,
+new_xdata = ukb_breast_test_x,
+new_ydata = ukb_breast_test_y,
+stability = varSel_breast,
+family =  "binomial",
+implementation = NULL,
+prediction = NULL,
+resampling = "subsampling",
+K = 1,
+tau = 0.8,
+seed = 1,
+verbose = FALSE,
+)
+
+rocbre$AUC
+```
+
+```{r}
+plot(rocbre)
+```
+
+
+```{r}
+rocova<-ExplanatoryPerformance(
+xdata = ukb_ovary_train_x, 
+ydata = ukb_ovary_train_y ,
+new_xdata = ukb_ovary_test_x,
+new_ydata = ukb_ovary_test_y,
+stability = varSel_ovary,
+family =  "binomial",
+implementation = NULL,
+prediction = NULL,
+resampling = "subsampling",
+K = 1,
+seed = 1,
+verbose = FALSE,
+)
+
+rocova$AUC
+mean(rocova$TPR)
+```
+
+```{r}
+plot(rocova)
+```
+
+```{r}
+rocute<-ExplanatoryPerformance(
+xdata = ukb_uterus_train_x, 
+ydata = ukb_uterus_train_y ,
+new_xdata = ukb_uterus_test_x,
+new_ydata = ukb_uterus_test_y,
+stability = varSel_uterus,
+family =  "binomial",
+implementation = NULL,
+prediction = NULL,
+resampling = "subsampling",
+K = 1,
+tau = 0.8,
+seed = 1,
+verbose = FALSE,
+)
+
+rocute$AUC
+```
+
+```{r}
+plot(rocute)
+```
+
+######Predictive model manual version
+
+```{r}
+log_reg <- glm(formula = femalecancer_incident_case  ~ varSel_female ,
+                    family  = binomial(link="logit"),
+                    data    = ukb_female_train)
+
+## Summary on log-mean ratio scale.
+summary(log_reg)
+
+```
+
+```{r}
+#These are Yes/No predictions, hard assigning a category
+y_pred_hard_log <- ifelse(predict(log_reg, type = "response",
+                              newdata = test[,-(ncol(test))]) > p1, "1", "0")
+
+#These are predictions where the number can be interpreted as a probability of getting ten year CHD
+y_pred_prob_log <- predict(log_reg, type = "response",
+                       newdata = test[,-(ncol(test))])
+```
+
+
+```{r}
+library(glmnet)
+library(pROC)
+
+```
+```{r}
+selectcolfemale = (selprop %>% filter(label_female != ""))$label_female
+print(selectcolfemale)
+
+selectcolbreast = (selprop %>% filter(label_breast != ""))$label_breast
+print(selectcolbreast)
+
+selectcolovary = (selprop %>% filter(label_ovary != ""))$label_ovary
+print(selectcolovary)
+
+selectcoluterus = (selprop %>% filter(label_uterus != ""))$label_uterus
+print(selectcoluterus)
+
+
+a1 <- ukb_train %>% filter(femalecancer_incident_case < 0 | femalecancer_incident_case > 1)
+
+ukb_female_train_y = as.numeric(ukb_female_train_y)
+ukb_female_train$femalecancer_incident_case = as.numeric(ukb_female_train$femalecancer_incident_case)
+
+ukb_female_train$femalecancer_incident_case = as.numeric(ukb_female_train$femalecancer_incident_case)
+
+ukb_breast_train_y = as.numeric(ukb_breast_train_y)
+
+ukb_ovary_train_y = as.numeric(ukb_ovary_train_y)
+ukb_uterus_train_y = as.numeric(ukb_uterus_train_y)
+```
+
+Logistic Lasso model FEMALE
+
+```{r}
+model_female <- glm(femalecancer_incident_case ~ Age_enrollment.0.0 + Female_Num_liveBirth.0.0 + Female_Menopause_unsure + Mother_breast_cancer + PhyMeas_BMI.0.0 + Bio_testosterone.0.0 + Bio_albumin.0.0 + Bio_phosphate.0.0, 
+             data = ukb_female_train, family = "binomial")
+
+predictions_female <- predict(model_female, newdata = ukb_female_test, type = "response")
+
+auc_female <- roc(ukb_female_test$femalecancer_incident_case, predictions_female)
+
+auc_female$auc
+
+```
+
+```{r}
+library(caret)
+
+# Create confusion matrix object
+confusion <- confusionMatrix(predictions_female, ukb_female_test$femalecancer_incident_case)
+
+# Extract accuracy, precision, and recall metrics
+accuracy <- confusion$overall[1]
+precision <- confusion$byClass[1]
+recall <- confusion$byClass[2]
+```
+
+
+```{r}
+plot(auc_female,colorize=TRUE, col="blue") 
+plot(auc_female_ridge ,colorize=TRUE,add = TRUE, col="orange")
+lines(c(0,1),col = "gray", lty = 4 )
+legend("bottomright", legend = c("Log, AUC = ", "cyl_binary, AUC = "), col = c("blue", "red"), lty = 1)
+```
+
+
+
+Logistic on breast
+```{r}
+
+model_breast <- glm(breast_incident_case ~ Age_enrollment.0.0 + Female_Menopause_unsure + Mother_breast_cancer + Bio_testosterone.0.0 + Bio_albumin.0.0 + Bio_phosphate.0.0 + Bio_igf_1.0.0 + Smoke_past_smoking.0.0 + Alcohol_freq.0.0, 
+             data = ukb_breast_train, family = "binomial")
+
+predictions_breast <- predict(model_breast, newdata = ukb_breast_test, type = "response")
+
+auc_breast<- roc(ukb_breast_test$breast_incident_case, predictions_breast)
+
+auc_breast$auc
+```
+
+LOGSTIC ON OVARY
+```{r}
+
+model_ovary <- glm(ovary_incident_case ~ Age_enrollment.0.0+ Female_Num_liveBirth.0.0 + Bio_igf_1.0.0 + income_household.0.0 + Female_Oestr_scr + Diet_added_salt.0.0 + Bio_shbg.0.0 + Bio_apolipoprotein_a.0.0 + Bio_calcium.0.0, 
+             data = ukb_ovary_train, family = "binomial")
+
+predictions_ovary <- predict(model_ovary, newdata = ukb_ovary_test, type = "response")
+
+auc_ovary<- roc(ukb_ovary_test$ovary_incident_case, predictions_ovary)
+
+auc_ovary$auc
+
+```
+
+LOGISTIC on Uterus
+```{r}
+
+model_uterus <- glm(uterus_incident_case ~ Age_enrollment.0.0 + Bio_shbg.0.0 + PhyMeas_BMI.0.0 + Bio_testosterone.0.0 + Bio_albumin.0.0, 
+             data = ukb_uterus_train, family = "binomial")
+
+predictions_uterus <- predict(model_uterus, newdata = ukb_uterus_test, type = "response")
+
+auc_uterus<- roc(ukb_uterus_test$uterus_incident_case, predictions_uterus)
+
+auc_uterus$auc
+```
+
+
+```{r}
+fit_female <- cv.glmnet(ukb_female_train_x, ukb_female_train_y, family = "binomial", alpha = 0.5)
+
+predictions_female <- predict(fit_female, newx = ukb_female_test_x, s = "lambda.min", type = "response")
+
+auc_female_elastic <- roc(ukb_female_test$femalecancer_incident_case, predictions_female)
+auc_female_elastic$auc
+```
+
+Breast elastic net 
+```{r}
+fit_breast <- cv.glmnet(ukb_breast_train_x, ukb_breast_train_y, family = "binomial", alpha = 0.5)
+
+predictions_breast <- predict(fit_breast, newx = ukb_breast_test_x, s = "lambda.min", type = "response")
+
+auc_breast_elastic <- roc(ukb_breast_test$breast_incident_case, predictions_breast)
+auc_breast_elastic$auc
+```
+
+Ovary elastic net
+```{r}
+fit_ovary <- cv.glmnet(ukb_ovary_train_x, ukb_ovary_train_y, family = "binomial", alpha = 0.5)
+
+predictions_ovary <- predict(fit_ovary, newx = ukb_ovary_test_x, s = "lambda.min", type = "response")
+
+auc_ovary_elastic <- roc(ukb_ovary_test$ovary_incident_case, predictions_ovary)
+auc_ovary_elastic$auc
+```
+Uterus elastic net
+```{r}
+fit_uterus <- cv.glmnet(ukb_uterus_train_x, ukb_uterus_train_y, family = "binomial", alpha = 0.5)
+
+predictions_uterus <- predict(fit_uterus, newx = ukb_uterus_test_x, s = "lambda.min", type = "response")
+
+auc_uterus_elastic <- roc(ukb_uterus_test$uterus_incident_case, predictions_uterus)
+auc_uterus_elastic$auc
+```
+
+
+```{r}
+library(ggplot2)
+
+plot(auc_uterus, col = "blue", main = "ROC Curves Uterus Cancer", print.auc = TRUE, xlim = c(1, 0.6))
+plot(auc_uterus_elastic, col = "red", add = TRUE, print.auc = TRUE)
+legend("bottomright", legend = c("mpg_binary, AUC = ", "cyl_binary, AUC = "), col = c("blue", "red"), lty = 1)
+
+
+# Get the coordinates for the ROC curves
+coords_uterus <- coords(auc_uterus, "all", ret = c("specificity", "sensitivity"))
+coords_uterus_elastic <- coords(auc_uterus_elastic, "all", ret = c("specificity", "sensitivity"))
+
+# Calculate the false positive rate (1 - specificity)
+fpr_uterus <- 1 - coords_uterus[, "specificity"]
+fpr_uterus_elastic <- 1 - coords_uterus_elastic[, "specificity"]
+
+library(pROC)
+library(ggplot2)
+
+
+# Generate the ROC objects
+roc_obj_uterus <- roc(response, predictor1) # Replace 'response' and 'predictor1' with your actual variables
+roc_obj_uterus_elastic <- roc(response, predictor2) # Replace 'response' and 'predictor2' with your actual variables
+
+
+# Generate a data frame with the ROC curve points
+roc_df <- data.frame(
+TPR = c(roc_obj_uterus$sensitivities, roc_obj_uterus_elastic$sensitivities),
+FPR = c(1 - roc_obj_uterus$specificities, 1 - roc_obj_uterus_elastic$specificities), Model = rep(c("Model 1", "Model 2"), each = length(roc_obj_uterus$sensitivities))
+)
+
+# Calculate AUC values
+auc_uterus <- auc(roc_obj_uterus)
+auc_uterus_elastic <- auc(roc_obj_uterus_elastic)
+
+# Create a ggplot object
+roc_plot <- ggplot(data = roc_df, aes(x = FPR, y = TPR, color = Model)) +
+geom_line() + labs(title = "ROC Curves Uterus Cancer", x = "False Positive Rate", y = "True Positive Rate") +
+scale_color_manual(values = c("blue", "red")) +
+theme_minimal()
+
+
+# Add AUC values to the legend
+roc_plot <- roc_plot +
+scale_color_manual(
+ values = c("blue", "red"),
+labels = c(paste0("Model 1, AUC = ", round(auc_uterus, 2)), paste0("Model 2, AUC = ", round(auc_uterus_elastic, 2)))
+)
+
+
+
+# Print the ROC plot
+print(roc_plot)
+```
+
+```{r}
+plot(auc_uterus, col = "blue", main = "ROC Curves Uterus Cancer", print.auc = TRUE, xlim = c(1, 0.6))
+plot(auc_uterus_elastic, col = "red", add = TRUE, print.auc = TRUE)
+legend("bottomright", legend = c("Stably selected female AUC", "ridge female AUC"), col = c("blue", "red"), lty = 1)
+```
+
+
+Female ridge
+```{r}
+fit_female <- cv.glmnet(ukb_female_train_x, ukb_female_train_y, family = "binomial", alpha =0)
+
+predictions_female <- predict(fit_female, newx = ukb_female_test_x, s = "lambda.min", type = "response")
+
+auc_female_ridge <- roc(ukb_female_test$femalecancer_incident_case, predictions_female)
+auc_female_ridge$auc
+```
+
+Breast ridge 
+```{r}
+fit_breast <- cv.glmnet(ukb_breast_train_x, ukb_breast_train_y, family = "binomial", alpha = 0)
+
+predictions_breast <- predict(fit_breast, newx = ukb_breast_test_x, s = "lambda.min", type = "response")
+
+auc_breast_ridge <- roc(ukb_breast_test$breast_incident_case, predictions_breast)
+auc_breast_ridge$auc
+```
+
+```{r}
+
+```
+
+
+Ovary ridge
+```{r}
+fit_ovary <- cv.glmnet(ukb_ovary_train_x, ukb_ovary_train_y, family = "binomial", alpha = 0)
+
+predictions_ovary <- predict(fit_ovary, newx = ukb_ovary_test_x, s = "lambda.min", type = "response")
+
+auc_ovary_ridge <- roc(ukb_ovary_test$ovary_incident_case, predictions_ovary)
+auc_ovary_ridge$auc
+```
+
+Uterus ridge
+```{r}
+fit_uterus <- cv.glmnet(ukb_uterus_train_x, ukb_uterus_train_y, family = "binomial", alpha = 0)
+
+predictions_uterus <- predict(fit_uterus, newx = ukb_uterus_test_x, s = "lambda.min", type = "response")
+
+auc_uterus_ridge <- roc(ukb_uterus_test$uterus_incident_case, predictions_uterus)
+auc_uterus_ridge$auc
+```
+
+
+```{r}
+plot(auc_breast,colorize=TRUE, col="blue") 
+plot(auc_breast_ridge ,colorize=TRUE,add = TRUE, col="orange")
+lines(c(0,1),col = "gray", lty = 4 )
+legend("bottomright", legend = c("Stably selected breast AUC", "ridge breast AUC"), col = c("blue", "red"), lty = 1)
+```
+
+
+
+```{r}
+
+plot(auc_ovary,colorize=TRUE, col="blue") 
+plot(auc_ovary_ridge ,colorize=TRUE,add = TRUE, col="orange", print.auc = TRUE)
+lines(c(0,1),col = "gray", lty = 4 )
+legend("bottomright", legend = c("Stably selected ovary AUC", "ridge ovary AUC"), col = c("blue", "red"), lty = 1)
+```
+
+```{r}
+plot(auc_uterus,colorize=TRUE, col="blue") 
+plot(auc_uterus_ridge ,colorize=TRUE,add = TRUE, col="orange")
+lines(c(0,1),col = "gray", lty = 4 )
+legend("bottomright", legend = c("Stably selected uterus AUC", "ridge uterus AUC"), col = c("blue", "red"), lty = 1)
+```
+
+```{r}
+plot(auc_female,colorize=TRUE, col="blue") 
+plot(auc_female_elastic ,colorize=TRUE,add = TRUE, col="orange", print.auc = TRUE)
+lines(c(0,1),col = "gray", lty = 4 )
+legend("bottomright", legend = c("Stably selected female AUC", "ridge female AUC"), col = c("blue", "red"), lty = 1)
+```
+
+
+```{r}
+plot(auc_breast,colorize=TRUE, col="blue", print.auc = TRUE) 
+plot(auc_breast_elastic ,colorize=TRUE,add = TRUE, col="orange")
+lines(c(0,1),col = "gray", lty = 4 )
+legend("bottomright", legend = c("stably selected breast AUC", "ridge breast AUC"), col = c("blue", "red"), lty = 1)
+```
+
+
+```{r}
+plot(auc_ovary,colorize=TRUE, col="blue", print.auc = TRUE) 
+plot(auc_ovary_elastic ,colorize=TRUE,add = TRUE, col="orange")
+lines(c(0,1),col = "gray", lty = 4 )
+legend("bottomright", legend = c("stably selected ovary AUC", "ridge ovary AUC"), col = c("blue", "red"), lty = 1)
+```
+
+
+
+
+```{r}
+plot(auc_uterus,colorize=TRUE, col="blue") 
+plot(auc_uterus_elastic ,colorize=TRUE,add = TRUE,print.auc = TRUE, col="orange")
+lines(c(0,1),col = "gray", lty = 4 )
+legend("bottomright", legend = c("stably selected uterus AUC", "ridge uterus AUC"), col = c("blue", "red"), lty = 1)
+```
