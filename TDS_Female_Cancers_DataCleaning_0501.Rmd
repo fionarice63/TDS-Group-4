@@ -1,0 +1,533 @@
+---
+title: "TDS_Female cancers"
+author: "Siwei Wu"
+date: "2023/2/10"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# set working directory and load packages
+```{r}
+# set up working directory
+rm(list=ls())
+path <- dirname(rstudioapi::getActiveDocumentContext()$path)
+setwd(path)
+
+# load packages
+#library(tidyverse)
+library(dplyr)
+library(RColorBrewer)
+library(mice)
+rm(path)
+```
+
+# Functions for data cleaning
+Function to Check NAs of each column in a dataframe
+```{r}
+# Check NAs
+NA_count_fun = function(df){
+  NA_count = sapply(df, function(x){sum(is.na(x))})
+  NA_count = as.data.frame(NA_count)
+  # NA_count = NA_count %>% filter(NA_count > 0)
+  return(NA_count)
+}
+
+```
+
+Function to Check NAs of each column of cases in a dataframe
+```{r}
+# Function to check NAs in cases
+# df is the subset of the data with femalecancer_incident_case as the last column
+NAInCases_count_fun = function(df){
+  df = df %>% filter(femalecancer_incident_case==1)
+  NA_in_cases = NA_count_fun(df)
+  return(NA_in_cases)
+}
+```
+
+Load in UKB data
+```{r}
+# read in data of exposure
+ukb_cate = readRDS("./extraction_and_recoding/outputs/ukb_recoded_cate.rds")
+ukb_numeric = readRDS("extraction_and_recoding/outputs/ukb_extracted_numeric.rds")
+```
+
+## Data pre-processing: Numeric variables
+Deal with abnormal values in numeric variables
+```{r}
+# Check numeric variables with abnormal values(negative numbers for numeric variables)
+abnormal_value = sapply(ukb_numeric, function(x){sum(ifelse(x<0, 1, 0), na.rm=TRUE)})
+abnormal_value = as.data.frame(abnormal_value)
+abnormal_value <- abnormal_value %>% filter (abnormal_value > 0)
+
+# replace abnormal values with number or NA
+  # -10 represents "Less than one"; -1 represents "Do not know"; -3 represents "Prefer not to answer"; -4 represents "Do not remember"
+  # Substitute 0.5 to -10, NA to -1, -3 and -4
+ukb_numeric[ukb_numeric==-10] = 0
+ukb_numeric[ukb_numeric==-1] = NA
+ukb_numeric[ukb_numeric==-3] = NA
+ukb_numeric[ukb_numeric==-4] = NA
+
+```
+
+Data pre-processing: Categorical variables
+```{r}
+# set all "Do not know" and "Prefer not to answer" to NA
+ukb_cate = ukb_cate %>% mutate_all(as.character)
+ukb_cate[ukb_cate == "Do not know"] = NA
+ukb_cate[ukb_cate == "Prefer not to answer"] = NA
+```
+
+Data merge
+Merge numeric data and categorical data
+```{r}
+ukb_cate["eid"] <- rownames(ukb_cate)
+ukb_numeric["eid"] <- rownames(ukb_numeric)
+ukb = inner_join(ukb_cate, ukb_numeric)
+
+# Remove unuseful data
+rm(abnormal_value)
+rm(ukb_cate, ukb_numeric)
+# rm(ukb_cate_edu, ukb_cate_employ, ukb_cate_illness_mother, ukb_cate_job)
+# rm(NA_cate, NA_numeric)
+```
+
+Merge the table of features with the table of outcome
+```{r}
+
+# Read in data of cancer
+breast_cancer <- readRDS("./outcome_definition/Outputs_breastcancer/output_final.rds")
+colnames(breast_cancer)<-c("eid", "breast_date_recr", "breast_date_diagnosis", "breast_date_death", "breast_case", "breast_prevalent_case", "breast_incident_case", "breast_time_to_diagnosis")
+
+uterus_cancer <- readRDS("./outcome_definition/Outputs_uterus/output_final.rds")
+colnames(uterus_cancer)<-c("eid", "uterus_date_recr", "uterus_date_diagnosis", "uterus_date_death", "uterus_case", "uterus_prevalent_case", "uterus_incident_case", "uterus_time_to_diagnosis")
+
+ovary_cancer <- readRDS("./outcome_definition/Outputs_ovary/output_final.rds")
+colnames(ovary_cancer)<-c("eid", "ovary_date_recr", "ovary_date_diagnosis", "ovary_date_death", "ovary_case", "ovary_prevalent_case", "ovary_incident_case", "ovary_time_to_diagnosis")
+
+other_genital_cancer <- readRDS("./outcome_definition/Outputs_Neoplasm_genital_others/output_final.rds")
+colnames(other_genital_cancer)<-c("eid", "others_date_recr", "others_date_diagnosis", "others_date_death", "others_case", "others_prevalent_case", "others_incident_case", "others_time_to_diagnosis")
+
+all_female_cancer <- readRDS("./outcome_definition/Outputs_all_female_cancers/output_final.rds")
+colnames(all_female_cancer)<-c("eid", "femalecancer_date_recr", "femalecancer_date_diagnosis", "femalecancer_date_death", "femalecancer_case", "femalecancer_prevalent_case", "femalecancer_incident_case", "femalecancer_time_to_diagnosis")
+
+all_cancer <- readRDS("./outcome_definition/Outputs_all_cancers/output_final.rds")
+
+
+# Merge tables
+ukb <- inner_join(ukb, (breast_cancer %>% select(eid, breast_incident_case)))
+ukb <- inner_join(ukb, (uterus_cancer %>% select(eid, uterus_incident_case)))
+ukb <- inner_join(ukb, (ovary_cancer %>% select(eid, ovary_incident_case)))
+ukb <- inner_join(ukb, (other_genital_cancer %>% select(eid, others_incident_case)))
+ukb <- inner_join(ukb, (all_female_cancer %>% select(eid, femalecancer_time_to_diagnosis, femalecancer_incident_case)))
+ukb <- inner_join(ukb, (all_cancer %>% select(eid, prevalent_case, incident_case)))
+
+# remove redundant tables
+rm(breast_cancer, ovary_cancer, uterus_cancer, other_genital_cancer, all_female_cancer, all_cancer)
+
+```
+
+# Inclusion and exclusion
+
+```{r}
+# Exclusion
+
+# Exclude male
+ukb = ukb %>% filter(Sex.0.0 == "Female")  
+
+# Exclude not white people 
+ukb = ukb %>% filter(Race.0.0=="British"|Race.0.0=="Irish"|Race.0.0=="Any other white background"|Race.0.0=="White") # only keep white people
+
+# Exclude prevalent cases (diagnosed with cancer before enrollment)
+ukb = ukb %>% filter(prevalent_case == 0) # remove prevalent cases
+ukb = ukb %>% select(-prevalent_case)
+
+# Exclude incidence cases of other cancer than female cancer
+ukb = ukb %>% filter(!(femalecancer_incident_case == 0 & incident_case == 1))
+ukb = ukb %>% select(-incident_case)
+
+# Exclude incidence cases of other cancer than female cancer
+ukb = ukb %>% filter(others_incident_case != 1)
+
+# Exclude co-morbidity
+ukb = ukb %>% filter((breast_incident_case + uterus_incident_case + ovary_incident_case + others_incident_case <= 1)) 
+
+# Exclude women who received hysterectomy or 	Bilateral oophorectomy
+ukb = ukb %>% filter(! is.na(Female_Uterus_removed.0.0) | !is.na(Female_Ovaries_removed.0.0))
+ukb = ukb %>% filter(Female_Menopause.0.0 != "Not sure - had a hysterectomy")
+
+
+```
+
+Create time to event variable: age at diagnosis
+```{r}
+# ukb["femalecancer_age_diagnosis"] = ukb["Age_enrollment.0.0"] + ukb["femalecancer_time_to_diagnosis"]/365.25
+ukb = ukb %>% select(-femalecancer_time_to_diagnosis)
+```
+
+### select variables 
+Remove variables for exclusion
+```{r}
+ukb = ukb %>% select(-c("Race.0.0", "Year_of_birth.0.0", "date_enroll.0.0", "Sex.0.0"))
+```
+
+Remove Metabolomics variables (200,000 missing)
+```{r}
+# apply(ukb_Meta, 2, function(x){sum(!is.na(x))}) # about 57000 participants with metabolomics data 
+ukb = ukb %>% select(-starts_with("Meta_"))
+```
+
+Remove Nutrient variables(200,000 missing)
+```{r}
+# apply(ukb_Nutrient, 2, function(x){sum(!is.na(x))}) # 34311 participants with nutrient data 
+ukb = ukb %>% select(-starts_with("Nutrient_"))
+```
+
+Remove job history variables
+```{r}
+ukb_job = ukb %>% select(starts_with('job_coding')) # only have job history of 120,000 participants, too many NAs; Not useful and will drop the columns
+NA_count_ukb_job = NA_count_fun(ukb_job)
+ukb = ukb %>% select(-colnames(ukb_job)) # remove variable of job history
+rm(NA_count_ukb_job, ukb_job)
+```
+
+Remove Job_shiftwork.0.0 which contains the same information as shift_work.0.0 , but just with more NAs
+```{r}
+ukb = ukb %>% select(-Job_shiftwork.0.0)
+```
+
+Remove sun exposure variables
+```{r}
+ukb = ukb %>% select(-starts_with("Sun_"))
+```
+
+Remove unimportant diet Variables: 
+```{r}
+ukb = ukb %>% select(-Diet_bread_type.0.0, -Diet_cereal_type.0.0, -Diet_coffee_type.0.0,  -Diet_non_butter_spread_type.0.0, -Diet_cheese_intake.0.0, -Diet_milk_type_used.0.0, -Diet_spread_type.0.0, -Diet_hot_drink_temp.0.0, -Diet_diet_change_5yr.0.0, -Diet_var_in_diet.0.0)
+
+```
+
+Remove unimportant smoking and alcohol variables
+```{r}
+ukb = ukb %>% select(-c("Smoke_household_smok.0.0", "Smoke_type_tobacoo.0.0", "Smoke_ever_quit_smoking_6mnths.0.0","Smoke_ever_smoked.0.0", "Smoke_exp_smoking_home.0.0", "Smoke_exp_smoking_outside_home.0.0", "Smoke_age_start_smoking.0.0", "Smoke_num_cigs_perday.0.0", "Smoke_age_smok_quit.0.0", "Smoke_num_failed_quit_smok.0.0", "Smoke_smoking_pack_yr_prop.0.0", "Smoke_smoking_status.0.0", "Alcohol_status.0.0"))
+```
+
+Merge the information of Urine_microalbumin_flag.0.0 to Urine_microalbumin.0.0 and remove Urine_microalbumin_flag.0.0
+```{r}
+# Urine_microalbumin < 6.7 is flagged, set people with Urine_microalbumin < 6.7 to be 6.7 in their Urine_microalbumin
+ukb = ukb %>% mutate(Urine_microalbumin.0.0 = ifelse(is.na(Urine_microalbumin_flag.0.0), Urine_microalbumin.0.0, 6.7)) %>% select(-Urine_microalbumin_flag.0.0)
+```
+
+Merge information of multiple columns of  mother cancer variables into one and drop the redundent columns
+```{r}
+ukb_illness_mother = ukb %>% select(starts_with("illness_mother"))
+
+ukb["Mother_breast_cancer_case"]= apply(ukb_illness_mother, MARGIN = 1, FUN= function(x) all("Breast cancer" %in% x))
+ukb["Mother_breast_cancer_NA"]= apply(ukb_illness_mother, MARGIN = 1, FUN= function(x) all(is.na(x)))
+ukb["Mother_breast_cancer_NA"]= ifelse(ukb$Mother_breast_cancer_NA, NA, 0)
+ukb["Mother_breast_cancer"] = ukb$Mother_breast_cancer_case + ukb$Mother_breast_cancer_NA
+
+ukb = ukb %>% select(-Mother_breast_cancer_NA, -Mother_breast_cancer_case) %>% select(-colnames(ukb_illness_mother))
+
+rm(ukb_illness_mother)
+```
+
+Remove redundant female specific variables
+```{r}
+# Drop variabels for inclusion and exclusion: "Female_Ovaries_removed.0.0", "Female_Age_Ovaries_removed.0.0", "Female_Uterus_removed.0.0", "Female_Age_Uterus_removed.0.0"
+ukb = ukb %>% select(-c("Female_Ovaries_removed.0.0", "Female_Age_Ovaries_removed.0.0", "Female_Uterus_removed.0.0", "Female_Age_Uterus_removed.0.0"))
+
+# Note: Three variables ("Female_Age_1stLiveBirth.0.0", "Female_Age_startHRT.0.0", and "Female_Age_menopause.0.0") depend on 3 parent variables, and it is normal to have some NAs. At this step, we will drop them and won't check it more
+ukb = ukb %>% select(-c("Female_Age_1stLiveBirth.0.0", "Female_Age_startHRT.0.0", "Female_Age_menopause.0.0"))
+```
+
+Only keep the first column of ukb_education & ukb_employment and remove the rest
+```{r}
+ukb_edu = ukb %>% select(starts_with("Education")) 
+ukb = ukb %>% mutate(Education = Education.0.0) %>% select(-colnames(ukb_edu)) 
+rm(ukb_edu)
+
+ukb_employ = ukb %>% select(starts_with("Employment")) 
+ukb = ukb %>% mutate(Employment = Employment.0.0) %>% select(-colnames(ukb_employ))
+rm(ukb_employ)
+```
+
+Remove redundent blood pressure variables
+```{r}
+# Blood pressure: blood pressure are measured with automated reading value, manual reading are used for people with missing value for automated reading value
+ukb = ukb %>% mutate(phyMeas_SBP = ifelse(is.na(PhyMeas_SBP_auto.0.0), PhyMeas_SBP_manual.0.0, PhyMeas_SBP_auto.0.0))
+ukb = ukb %>% mutate(phyMeas_DBP = ifelse(is.na(PhyMeas_DBP_auto.0.0), PhyMeas_DBP_manual.0.0, PhyMeas_DBP_auto.0.0))
+ukb = ukb %>% select(-c("PhyMeas_SBP_manual.0.0", "PhyMeas_SBP_manual.0.1", "PhyMeas_DBP_manual.0.0", "PhyMeas_DBP_manual.0.1", "PhyMeas_DBP_auto.0.0", "PhyMeas_DBP_auto.0.1", "PhyMeas_SBP_auto.0.0","PhyMeas_SBP_auto.0.1"))
+```
+
+
+
+## Check NAs of each variable and each observation 
+```{r}
+ukb_exposure = ukb %>% select(-c("breast_incident_case", "uterus_incident_case", "ovary_incident_case", "others_incident_case", "femalecancer_incident_case"))
+```
+
+```{r}
+
+## Check NAs of each observation
+# sum(apply(ukb_exposure, 1, function(x){(sum(is.na(x))/(dim(ukb_exposure)[2]-1))>0.25}))
+## 13928 Observations has more than 25% of variables with NAs
+ukb = ukb[apply(ukb_exposure, 1, function(x){(sum(is.na(x))/(dim(ukb_exposure)[2]-1))<0.25}), ]
+ukb_exposure = ukb_exposure[apply(ukb_exposure, 1, function(x){(sum(is.na(x))/(dim(ukb_exposure)[2]-1))<0.25}), ]
+
+## Check NAs of each variable
+NA_count_ukb = NA_count_fun(ukb_exposure)
+NA_count_ukb = NA_count_ukb %>% mutate(NA_percent = NA_count/(dim(ukb_exposure)[1])) %>% filter(NA_percent >= 0.25)
+## Three variables have more them 25% NAs, remove the three variables: "shift_work.0.0", "Bio_oestradiol.0.0", "Bio_rheumatoid_factor.0.0"
+ukb = ukb %>% select(-rownames(NA_count_ukb))
+rm(ukb_exposure, NA_count_ukb)
+```
+
+## Recode and factor variables
+Factor houeshold income
+```{r}
+ukb$income_household.0.0 <- factor(ukb$income_household.0.0, levels=c("Less than 18,000", "18,000 to 30,999", "31,000 to 51,999", "52,000 to 100,000", "Greater than 100,000"))
+```
+
+Factor alcohol variables
+```{r}
+ukb$Alcohol_freq.0.0 = factor(ukb$Alcohol_freq.0.0, levels=c( "Never", "Special occasions only", "One to three times a month", "Three or four times a week", "Once or twice a week", "Daily or almost daily"))
+```
+
+Factor Smoke_past_smoking.0.0 and Smoke_Curr_Smoking.0.0
+```{r}
+ukb$Smoke_past_smoking.0.0 = factor(ukb$Smoke_past_smoking.0.0, levels=c("I have never smoked","Just tried once or twice", "Smoked occasionally", "Smoked on most or all days")) # factor the variable and set "I have never smoked" as baseline
+ukb$Smoke_Curr_Smoking.0.0 = factor(ukb$Smoke_Curr_Smoking.0.0, levels=c("No", "Only occasionally", "Yes, on most or all days"))
+```
+
+Factor and re-level categorical data
+```{r}
+# Factor and re-level categorical data(These variables except Sleep_chronotype.0.0 are all ordinal)
+# colnames(ukb_sleep)
+ukb$Sleep_getting_up.0.0 = factor(ukb$Sleep_getting_up.0.0, levels=c("Not at all easy", "Not very easy", "Fairly easy", "Very easy"))
+ukb$Sleep_chronotype.0.0 = factor(ukb$Sleep_chronotype.0.0, levels=c("Definitely an 'evening' person", "More an 'evening' than a 'morning' person", "More a 'morning' than 'evening' person", "Definitely a 'morning' person"))
+ukb$Sleep_nap.0.0 = factor(ukb$Sleep_nap.0.0, levels=c("Never/rarely", "Sometimes", "Usually"))
+ukb$Sleep_insomnia.0.0 =  factor(ukb$Sleep_insomnia.0.0, levels=c("Never/rarely", "Sometimes", "Usually"))
+ukb$Sleep_snoring.0.0 = factor(ukb$Sleep_snoring.0.0, levels=c("No","Yes"))
+ukb$Sleep_narcolepsy.0.0 = factor(ukb$Sleep_narcolepsy.0.0, levels=c("Never/rarely", "Sometimes", "Often", "All of the time"))
+```
+
+Factor categorical variables
+```{r}
+for(diet in c("Diet_oil_fish_intake.0.0", "Diet_non_oil_fish_intake.0.0", "Diet_proc_meat_intake.0.0", "Diet_poultry_intake.0.0", "Diet_beef_intake.0.0", "Diet_mutton_intake.0.0", "Diet_pork_intake.0.0")){
+  ukb[,diet] = recode(
+    ukb[,diet],
+    "Never" =  "Never",
+    "Less than once a week"="Less than once a week", 
+    "Once a week"="Once a week", 
+    "2-4 times a week"="more then 2 times a week", 
+    "5-6 times a week"="more then 2 times a week", 
+    "Once or more daily"="more then 2 times a week", 
+    "Unknown" = "Unknown"
+  )
+  ukb[,diet] = factor(ukb[,diet], levels=c("Never", "Less than once a week", "Once a week", "more then 2 times a week")) 
+}
+
+#Diet_added_salt.0.0
+ukb$Diet_added_salt.0.0  = factor(ukb$Diet_added_salt.0.0 , levels=c("Never/rarely","Sometimes", "Usually", "Always"))
+```
+
+Recode current employment data
+```{r}
+ukb$Employment = ifelse(ukb$Employment == "None of the above", NA, ukb$Employment) 
+## Only 1001 none of the above
+
+ukb = ukb %>% mutate(Employment = recode(
+  Employment,
+  "Unemployed"="No/can't work", 
+  "Unable to work because of sickness or disability" = "No/can't work",
+  "Doing unpaid or voluntary work"="Unpaid/no work but funded(eg: student/retired)", 
+  "Full or part-time student"="Unpaid/no work but funded(eg: student/retired)", 
+  "Looking after home and/or family"="Unpaid/no work but funded(eg: student/retired)", 
+  "Retired"="Unpaid/no work but funded(eg: student/retired)", 
+  "In paid employment or self-employed"="In paid employment or self-employed",
+  ))
+
+# Factor Employment
+ukb$Employment = factor(ukb$Employment, levels=c("No/can't work", "Unpaid/no work but funded(eg: student/retired)", "In paid employment or self-employed"))
+
+rm(ukb_employ)
+```
+Recode and factor Education
+```{r}
+# Set "None of the above"(32000) to be NAs, because education is a ordinal variable, can't group None of the above to any group
+ukb$Education = ifelse(ukb$Education == "None of the above", NA, ukb$Education) 
+
+# Recode the education level with the first column of education(highest education level)
+ukb = ukb %>% mutate(Education = recode(
+  Education,
+  "CSEs or equivalent" = "CSE/OLEVEL/GCES",
+  "O levels/GCSEs or equivalent"= "CSE/OLEVEL/GCES",  
+  "A levels/AS levels or equivalent" ="A levels/AS levels or equivalent",
+  "College or University degree" = "College/University degree, professional qualifications, NVQ/HND/HNC",
+  "Other professional qualifications eg: nursing, teaching" = "College/University degree, professional qualifications, NVQ/HND/HNC",
+  "NVQ or HND or HNC or equivalent"="College/University degree, professional qualifications, NVQ/HND/HNC"
+))
+
+# Factor education
+ukb$Education = factor(ukb$Education, levels=c(
+  "CSE/OLEVEL/GCES",
+  "A levels/AS levels or equivalent", 
+  "College/University degree, professional qualifications, NVQ/HND/HNC"))
+```
+
+
+```{r}
+ukb$Female_Menopause.0.0 = factor(ukb$Female_Menopause.0.0, levels=c("No", "Not sure - other reason", "Yes"))
+ukb$Female_Ever_use_HRT.0.0 = factor(ukb$Female_Ever_use_HRT.0.0, levels = c("No", "Yes"))
+```
+
+
+## Impute variables
+```{r}
+# move out the outcomes 
+ukb_outcome = ukb %>% select(eid, c("breast_incident_case", "uterus_incident_case", "ovary_incident_case", "others_incident_case", "femalecancer_incident_case"))
+
+# extract exposures to impute
+ukb_exposure = ukb %>% select(-c("breast_incident_case", "uterus_incident_case", "ovary_incident_case", "others_incident_case", "femalecancer_incident_case"))
+rownames(ukb_exposure) = ukb_exposure$eid
+ukb_exposure = ukb_exposure %>% select(-eid)
+```
+
+```{r}
+str(ukb)
+str(ukb_exposure)
+ukb_exposure = complete(mice(ukb_exposure, meth='pmm', seed=500))
+write_rds(ukb_exposure, "ukb_exposure_0429.rds")
+# ukb_exposure = read_rds("ukb_exposure_0429.rds")
+```
+
+## Merge ukb_exposure and ukb-outcome
+```{r}
+ukb_exposure = ukb_exposure %>% mutate(eid = rownames(ukb_exposure))
+ukb = merge(ukb_exposure, ukb_outcome)
+```
+
+
+## Create Oestrogen score
+```{r}
+ukb_age_menopause = readRDS("extraction_and_recoding/outputs/ukb_extracted_numeric.rds") 
+ukb_age_menopause = ukb_age_menopause %>% select(Female_Age_menopause.0.0) %>% mutate(eid = rownames(ukb_age_menopause))
+
+
+ukb = ukb %>% inner_join(ukb_age_menopause)
+
+ukb = ukb %>% mutate(Female_Oestr_scr  
+                        = (Female_Num_liveBirth.0.0 == 0) # + 1 point if no children   
+                        + (ifelse(is.na(Female_Age_menopause.0.0), 0, Female_Age_menopause.0.0 > quantile(Female_Age_menopause.0.0, 0.8, na.rm=TRUE)))
+                           #+1 point for 20% latest menapause # + 0 point for not menapause 
+                        + (ukb$Female_Age_menarche.0.0 < quantile(ukb$Female_Age_menarche.0.0, 0.2)) # +1 point for 20% most early menarche
+                        + (Female_Ever_use_HRT.0.0=="Yes") # +1 point if having used HRP
+                          ) %>% select(-Female_Age_menopause.0.0)
+
+
+table(ukb$Female_Oestr_scr)
+rm(ukb_age_menopause)
+
+```
+
+
+# Remove other female cancers
+```{r}
+ukb = ukb %>% filter(ukb$others_incident_case!=1)
+ukb = ukb %>% select(-others_incident_case)
+```
+
+
+## Downsample controls and match by age
+```{r}
+library(MatchIt)
+set.seed(1234)
+# t.test( Age_enrollment.0.0 ~ femalecancer_incident_case, data = ukb)
+ukb_match = matchit(femalecancer_incident_case ~ Age_enrollment.0.0, data=ukb, method = "nearest", ratio = 1)
+ukb = match.data(ukb_match)
+# t.test( Age_enrollment.0.0 ~ femalecancer_incident_case, data = ukb)
+ukb = ukb %>% select(-weights, -distance, -subclass)
+```
+
+
+
+## Descriptive analysis(table1)
+```{r}
+
+library(tableone)
+
+# ukb = ukb %>% mutate(cancer_type = ifelse(others_incident_case == 1, "others", "controls"))
+# ukb$cancer_type = ifelse(ukb$breast_incident_case == 1, "breast", ukb$cancer_type)
+
+ukb = ukb %>% mutate(cancer_type = ifelse(breast_incident_case == 1, "breast", "controls"))
+ukb$cancer_type = ifelse(ukb$uterus_incident_case == 1, "uterus", ukb$cancer_type)
+ukb$cancer_type = ifelse(ukb$ovary_incident_case == 1, "ovary", ukb$cancer_type)
+
+# sum(sum(ukb$others_incident_case, ukb$breast_incident_case, ukb$uterus_incident_case, ukb$ovary_incident_case) >=2) # 1 person has more than 1 cancer
+
+attri_descri <- c("Age_enrollment.0.0", "Education", "Employment", "Income_household.0.0", "PhyMeas_BMI.0.0", "phyMeas_SBP", "phyMeas_DBP", "Female_Menopause.0.0", "Female_Age_menarche.0.0", "Female_Num_liveBirth.0.0", "Female_Ever_use_HRT.0.0") # Pick the variables you want to include in table 1
+
+
+# # descriptive analysis  stratified by incident_case
+Descri_cancertype = CreateTableOne(data=ukb, vars=attri_descri, strata="cancer_type")
+Descri_cancer = CreateTableOne(data=ukb, vars=attri_descri, strata="femalecancer_incident_case")
+
+# summary(Descri_ana) # check if there is missing data
+# 
+Descri_cancertype_table <- print(Descri_cancertype, showAllLevels = TRUE)
+Descri_cancer_table <- print(Descri_cancer, showAllLevels = TRUE)
+write.csv(Descri_cancertype_table, file="Descri_cancertype.csv")
+write.csv(Descri_cancer_table , file="Descri_cancer.csv")
+
+library(kableExtra)
+kableone(Descri_cancertype_table, booktabs = TRUE, format = "latex")
+
+ukb = ukb %>% select(-cancer_type)
+
+```
+
+## Pre-analysis coding
+
+# One hot code
+One hot code Female_Menopause.0.0
+```{r}
+ukb = ukb %>% mutate(Female_Menopause_no = ifelse(Female_Menopause.0.0 == "No", 1, 0))
+ukb = ukb %>% mutate(Female_Menopause_unsure = ifelse(Female_Menopause.0.0 == "Not sure - other reason", 1, 0))
+ukb = ukb %>% mutate(Female_Menopause_yes = ifelse(Female_Menopause.0.0 == "Yes", 1, 0))
+ukb = ukb %>% select(-Female_Menopause.0.0)
+```
+
+One hot code employment
+```{r}
+ukb = ukb %>% mutate(Employment_no_or_cnt_wk = ifelse(Employment == "No/can't work", 1,0))
+ukb = ukb %>% mutate(Employment_unpaid_wk_or_funded = ifelse(Employment=="Unpaid/no work but funded(eg: student/retired)", 1,0))
+ukb = ukb %>% mutate(Employment_paid_or_sf_emply = ifelse(Employment=="In paid employment or self-employed", 1,0)) 
+ukb = ukb %>% select(-Employment)
+```
+
+
+## Check complete case and output data
+```{r}
+NA_count_ukb = NA_count_fun(ukb)
+write_rds(ukb, "ukb_0501.rds")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
