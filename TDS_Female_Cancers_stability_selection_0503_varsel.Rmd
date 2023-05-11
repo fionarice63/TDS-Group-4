@@ -1,0 +1,601 @@
+---
+title: "TDS_Female_Cancers_stability_selection" Constance
+
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Pre-analysis
+```{r cars}
+suppressPackageStartupMessages(library(glmnet))
+suppressPackageStartupMessages(library(igraph))
+suppressPackageStartupMessages(library(pheatmap))
+suppressPackageStartupMessages(library(fake))
+suppressPackageStartupMessages(library(sharp))
+suppressPackageStartupMessages(library(tidyverse))
+```
+
+```{r}
+# set up working directory
+rm(list=ls())
+path <- dirname(rstudioapi::getActiveDocumentContext()$path)
+setwd(path)
+
+# load packages
+#library(tidyverse)
+library(dplyr)
+library(RColorBrewer)
+library(mice)
+library(gglasso)
+#library(devtools)
+#install_github("barbarabodinier/sharp")
+# install_github("barbarabodinier/fake")
+library(OpenMx)
+library(igraph)
+library(sharp)
+library(fake)
+rm(path)
+
+# Read in dataset 
+ukb = readRDS("ukb_varsel_0501.rds")
+```
+
+## Transform factors to ordinal variables
+```{r}
+# Re-code Sleep_snoring.0.0 and Female_Ever_use_HRT.0.0 (binary variables)
+ukb$Sleep_snoring.0.0 = ifelse(ukb$Sleep_snoring.0.0=="No", 0, 1)
+ukb$Female_Ever_use_HRT.0.0 = ifelse(ukb$Female_Ever_use_HRT.0.0=="No", 0, 1)
+
+# Select factor variables
+ukb_cate= ukb %>% select(eid, is.factor)
+
+# Transform factors into ordinal variables
+ukb_ordinal = as.data.frame(lapply(ukb_cate, as.numeric))
+  
+# Select non factor variables
+ukb_nonfactor = ukb %>% select(-is.factor)
+ukb_nonfactor$eid = as.numeric(ukb$eid)
+
+# Merge
+ukb = inner_join(ukb_ordinal, ukb_nonfactor)
+
+rm(ukb_cate, ukb_ordinal, ukb_nonfactor)
+```
+
+## factor binary variables(only for univariate analysis)
+```{r}
+## factor binary variables(only for univariate variables)
+# ukb$Sleep_snoring.0.0 = factor(ukb$Sleep_snoring.0.0)
+# ukb$Mother_breast_cancer = factor(ukb$Mother_breast_cancer)
+# ukb$Mother_cancer = factor(ukb$Mother_cancer)
+# ukb$Mother_breast_cancer = factor(ukb$Mother_breast_cancer)
+# ukb$Mother_cancer = factor(ukb$Mother_cancer)
+# ukb$Female_Menopause_no = factor(ukb$Female_Menopause_no )
+# ukb$Female_Menopause_unsure = factor(ukb$Female_Menopause_unsure)
+# ukb$Female_Menopause_yes = factor(ukb$Female_Menopause_yes)
+# ukb$Female_Ever_use_HRT.0.0 = factor(ukb$Female_Ever_use_HRT.0.0)
+# rm(ukb_cate, ukb_ordinal, ukb_nonfactor)
+```
+
+## Transform logical variables into numeric
+```{r}
+ukb$Mother_breast_cancer = as.numeric(ukb$Mother_breast_cancer)
+```
+
+## Pick up variables necessary for analysis and reorder the variables
+```{r}
+rownames(ukb) = ukb$eid
+ukb = ukb %>% select(-eid)
+
+# Re-arrange the  variables
+## Biochemical metrics
+sex_horm = c("Bio_shbg.0.0","Bio_testosterone.0.0")
+glucose = c("Bio_glucose.0.0", "Bio_glycated_haemoglobin.0.0", "Bio_igf_1.0.0")
+liver = c("Bio_alkaline_phosphate.0.0", "Bio_alanine_aminotransferase.0.0", "Bio_aspartate_aminotransferase.0.0", "Bio_direct_bilirubin.0.0", "Bio_gamma_glutamyltransferase.0.0", "Bio_total_bilirubin.0.0")
+lipid = c("Bio_apolipoprotein_a.0.0", "Bio_apolipoprotein_b.0.0", "Bio_cholesterol.0.0", "Bio_hdl_cholesterol.0.0", "Bio_ldl_direct.0.0", "Bio_lipoprotein_a.0.0", "Bio_triglycerides.0.0")
+nutrit = c("Bio_albumin.0.0", "Bio_total_protein.0.0")
+inflam = c("Bio_c_reac_protein.0.0")
+urate = c("Bio_urate.0.0")
+skeleton = c("Bio_calcium.0.0", "Bio_phosphate.0.0", "Bio_vitamin_d.0.0")
+kidney = c("Bio_urea.0.0", "Bio_creatinine.0.0", "Bio_cystatin_c.0.0")
+
+## Physical Measurement, environment, and demographic variables
+# PhyMeas = c("phyMeas_SBP", "phyMeas_DBP", "PhyMeas_waist_cir.0.0", "PhyMeas_BMI.0.0")
+PhyMeas = c("PhyMeas_BMI.0.0", "phyMeas_SBP", "phyMeas_DBP")
+demo = c("Age_enrollment.0.0", "income_household.0.0", "Education","Employment_no_or_cnt_wk","Employment_paid_or_sf_emply","Employment_unpaid_wk_or_funded")
+PhyAC = c("Days_WK_PhyAc.0.0")
+envir = c("no2_air_pol.0.0","no_air_pol.0.0")
+
+ukb = ukb %>% select(
+  all_of(demo), 
+  starts_with("Female_"), 
+  starts_with("Mother_"), 
+  envir, 
+  PhyAC,
+  starts_with("Sleep_"), 
+  starts_with("Smoke_"), 
+  starts_with("Alcohol_"), 
+  starts_with("Diet_"), 
+  all_of(PhyMeas),
+  all_of(sex_horm), 
+  all_of(glucose), 
+  all_of(liver), 
+  all_of(lipid), 
+  all_of(nutrit), 
+  all_of(inflam), 
+  all_of(urate), 
+  all_of(skeleton), 
+  all_of(kidney), 
+  starts_with("Urine_"),
+  breast_incident_case,
+  uterus_incident_case, 
+  ovary_incident_case, 
+  # others_incident_case, 
+  femalecancer_incident_case)
+
+rm(PhyMeas, demo, envir, sex_horm, glucose, liver, lipid, nutrit, inflam, urate, skeleton, kidney)
+
+```
+
+Binary variabels
+```{r}
+# To decide whether scale binary variables or not: the following are binary variables 
+# Binary_variable = c("Employment_no_or_cnt_wk", "Employment_paid_or_sf_emply", "Employment_unpaid_wk_or_funded", "Female_Ever_use_HRT.0.0", "Female_Menopause_no", "Female_Menopause_unsure", "Female_Menopause_yes", "Mother_breast_cancer")
+```
+
+Create data set for each cancer
+```{r}
+# Female cancer
+ukb_female = ukb %>% select(-ovary_incident_case, -uterus_incident_case, -breast_incident_case)
+# ukb_female = ukb %>% select(-ovary_incident_case, -uterus_incident_case, -others_incident_case, -breast_incident_case)
+
+# Factor Outcome
+ukb_female$femalecancer_incident_case = factor(ukb_female$femalecancer_incident_case)
+
+# Split X and Y
+ukb_female_x = as.matrix(ukb_female %>% select(-femalecancer_incident_case))
+ukb_female_x = scale(ukb_female_x)
+ukb_female_y = as.matrix(ukb_female %>% select(femalecancer_incident_case))
+```
+
+```{r}
+# Breat cancer
+# ukb_breast = ukb %>% filter(uterus_incident_case == 0 | breast_incident_case==1) %>% 
+#   filter(ovary_incident_case == 0 | breast_incident_case==1) %>% 
+#   filter(others_incident_case == 0| breast_incident_case==1) %>% 
+#   select(-ovary_incident_case, -uterus_incident_case, -others_incident_case,-femalecancer_incident_case)
+ukb_breast = ukb %>% filter(uterus_incident_case == 0 | breast_incident_case==1) %>% 
+  filter(ovary_incident_case == 0 | breast_incident_case==1) %>% 
+  select(-ovary_incident_case, -uterus_incident_case,-femalecancer_incident_case)
+
+# Factor Outcome
+ukb_breast$breast_incident_case = factor(ukb_breast$breast_incident_case)
+
+# Split X and Y
+ukb_breast_x = as.matrix(ukb_breast %>% select(-breast_incident_case))
+ukb_breast_x = scale(ukb_breast_x)
+ukb_breast_y = as.matrix(ukb_breast %>% select(breast_incident_case))
+
+```
+
+```{r}
+# Ovary cancer
+# ukb_ovary = ukb %>% filter(uterus_incident_case == 0 | ovary_incident_case == 1 ) %>%
+#   filter(breast_incident_case == 0 | ovary_incident_case == 1 ) %>%
+#   filter(others_incident_case == 0 | ovary_incident_case == 1 ) %>%
+#   select(-breast_incident_case, -uterus_incident_case, -others_incident_case,-femalecancer_incident_case)
+ukb_ovary = ukb %>% filter(uterus_incident_case == 0 | ovary_incident_case == 1 ) %>%
+  filter(breast_incident_case == 0 | ovary_incident_case == 1 ) %>%
+  select(-breast_incident_case, -uterus_incident_case,-femalecancer_incident_case)
+
+# Factor Outcome
+ukb_ovary$ovary_incident_case = factor(ukb_ovary$ovary_incident_case)
+
+# Split X and Y
+ukb_ovary_x = as.matrix(ukb_ovary %>% select(-ovary_incident_case))
+ukb_ovary_x = scale(ukb_ovary_x)
+ukb_ovary_y = as.matrix(ukb_ovary %>% select(ovary_incident_case))
+```
+
+```{r}
+# Uterus cancer
+# ukb_uterus = ukb %>% filter(breast_incident_case == 0 | uterus_incident_case==1) %>% filter(ovary_incident_case == 0| uterus_incident_case==1) %>% filter(others_incident_case == 0| uterus_incident_case==1) %>% select(-ovary_incident_case, -breast_incident_case, -others_incident_case,-femalecancer_incident_case)
+ukb_uterus = ukb %>% filter(breast_incident_case == 0 | uterus_incident_case==1) %>% 
+  filter(ovary_incident_case == 0| uterus_incident_case==1) %>% 
+  select(-ovary_incident_case, -breast_incident_case,-femalecancer_incident_case)
+
+# Factor Outcome
+ukb_uterus$uterus_incident_case = factor(ukb_uterus$uterus_incident_case)
+
+# Split X and Y
+ukb_uterus_x = as.matrix(ukb_uterus %>% select(-uterus_incident_case))
+ukb_uterus_x = scale(ukb_uterus_x)
+ukb_uterus_y = as.matrix(ukb_uterus %>% select(uterus_incident_case))
+```
+
+# Stability selection LASSO
+## Running Stability Selection on all risk factors(unadjusted)
+```{r}
+# varSel_female <- VariableSelection(ukb_female_x, ukb_female_y, family = "binomial") 
+# varSel_breast = VariableSelection(ukb_breast_x, ukb_breast_y, family = "binomial")
+# varSel_uterus = VariableSelection(ukb_uterus_x, ukb_uterus_y, family = "binomial")
+# varSel_ovary = VariableSelection(ukb_ovary_x, ukb_ovary_y, family = "binomial")
+```
+
+## Running Stability Selection LASSO on Bio Urine metrics adjusted for Age
+```{r}
+# ukb_female_bio_x = as.data.frame(ukb_female_x) %>% select(c("Age_enrollment.0.0"), starts_with("Bio_"), starts_with("Urine"))
+# ukb_breast_bio_x = as.data.frame(ukb_breast) %>% select(c("Age_enrollment.0.0"), starts_with("Bio_"), starts_with("Urine"))
+# ukb_uterus_bio_x = as.data.frame(ukb_uterus) %>% select(c("Age_enrollment.0.0"), starts_with("Bio_"), starts_with("Urine"))
+# ukb_ovary_bio_x = as.data.frame(ukb_ovary) %>% select(c("Age_enrollment.0.0"), starts_with("Bio_"), starts_with("Urine"))
+# 
+# 
+# varSel_female_bio = VariableSelection(ukb_female_bio_x, ukb_female_y, family = "binomial", penalty.factor = c(rep(0, 1), rep(1, dim(ukb_female_bio_x)[2]-1)))
+# varSel_breast_bio = VariableSelection(ukb_breast_bio_x, ukb_breast_y, family = "binomial", penalty.factor = c(rep(0, 1), rep(1, dim(ukb_breast_bio_x)[2]-1)))
+# varSel_uterus_bio = VariableSelection(ukb_uterus_bio_x, ukb_uterus_y, family = "binomial", penalty.factor = c(rep(0, 1), rep(1, dim(ukb_uterus_bio_x)[2]-1)))
+# varSel_ovary_bio = VariableSelection(ukb_ovary_bio_x, ukb_ovary_y, family = "binomial", penalty.factor = c(rep(0, 1), rep(1, dim(ukb_ovary_bio_x)[2]-1)))
+# 
+# 
+# selprop_bio = cbind(SelectionProportions(varSel_female_bio),
+#                     SelectionProportions(varSel_breast_bio), 
+#                     SelectionProportions(varSel_uterus_bio), 
+#                     SelectionProportions(varSel_ovary_bio))
+# rm(ukb_female_bio_x, ukb_breast_bio_x, ukb_uterus_bio_x, ukb_ovary_bio_x)
+```
+
+## Running Stability Selection LASSO on Environment factors adjusted for Age
+```{r}
+# ukb_female_env_x = as.data.frame(ukb_female_x) %>% select(-starts_with("Bio_"), -starts_with("Urine"))
+# ukb_breast_env_x = as.data.frame(ukb_breast) %>% select(-starts_with("Bio_"), -starts_with("Urine"))
+# ukb_uterus_env_x = as.data.frame(ukb_uterus) %>% select(-starts_with("Bio_"), -starts_with("Urine"))
+# ukb_ovary_env_x = as.data.frame(ukb_ovary) %>% select(-starts_with("Bio_"), -starts_with("Urine"))
+# 
+# 
+# varSel_female_env = VariableSelection(ukb_female_env_x, ukb_female_y, family = "binomial", penalty.factor = c(rep(0, 1), rep(1, dim(ukb_female_env_x)[2]-1)))
+# varSel_breast_env = VariableSelection(ukb_breast_env_x, ukb_breast_y, family = "binomial", penalty.factor = c(rep(0, 1), rep(1, dim(ukb_breast_env_x)[2]-1)))
+# varSel_uterus_env = VariableSelection(ukb_uterus_env_x , ukb_uterus_y, family = "binomial", penalty.factor = c(rep(0, 1), rep(1, dim(ukb_uterus_env_x)[2]-1)))
+# varSel_ovary_env = VariableSelection(ukb_ovary_env_x, ukb_ovary_y, family = "binomial", penalty.factor = c(rep(0, 1), rep(1, dim(ukb_ovary_env_x)[2]-1)))
+# 
+# selprop_env = cbind(varSel_female_env, varSel_breast_env, varSel_uterus_env, varSel_ovary_env)
+# rm(ukb_female_env_x, ukb_breast_env_x, ukb_uterus_env_x, ukb_ovary_env_x)
+# rm(varSel_female_env, varSel_breast_env, varSel_uterus_env, varSel_ovary_env)
+
+```
+
+## Running Stability Selection LASSO on all risk factors adjusted for Age
+```{r}
+varSel_female = VariableSelection(ukb_female_x, ukb_female_y, family = "binomial", penalty.factor = c(rep(0, 1), rep(1, dim(ukb_female_x)[2]-1))) 
+varSel_breast = VariableSelection(ukb_breast_x, ukb_breast_y, family = "binomial", penalty.factor = c(rep(0, 1), rep(1, dim(ukb_breast_x)[2]-1)))
+varSel_uterus = VariableSelection(ukb_uterus_x, ukb_uterus_y, family = "binomial", penalty.factor = c(rep(0, 1), rep(1, dim(ukb_uterus_x)[2]-1)))
+varSel_ovary = VariableSelection(ukb_ovary_x, ukb_ovary_y, family = "binomial", penalty.factor = c(rep(0, 1), rep(1, dim(ukb_ovary_x)[2]-1)))
+```
+
+# Visualization
+## Calibration Plot
+Stability score is color codes
+```{r}
+pdf("Calibration PLot(Stability selection lasso).pdf ")
+par(mfrow=c(2,2), mar=c(2,2,2,2))
+CalibrationPlot(varSel_female, cex.axis=0.5)
+CalibrationPlot(varSel_breast, cex.axis=0.5)
+CalibrationPlot(varSel_uterus, cex.axis=0.5)
+CalibrationPlot(varSel_ovary, cex.axis=0.5)
+dev.off()
+```
+
+## Calibrated selection proportions
+```{r}
+# Selection proportion
+selprop_female <- SelectionProportions(varSel_female) 
+selprop_breast <- SelectionProportions(varSel_breast) 
+selprop_uterus <- SelectionProportions(varSel_uterus) 
+selprop_ovary <- SelectionProportions(varSel_ovary)
+
+selprop = cbind(selprop_female, selprop_breast, selprop_uterus, selprop_ovary)
+selprop = as.data.frame(selprop)
+```
+
+```{r}
+# Stability selection threshold
+smry_stab_lasso = as.data.frame(rbind(Argmax(varSel_female), Argmax(varSel_breast), Argmax(varSel_uterus), Argmax(varSel_ovary)))
+rownames(smry_stab_lasso) = c("female cancer", "breast cancer", "uterus cancer", "ovary cancer")
+write.csv(smry_stab_lasso, "smry_stab_lasso.csv")
+```
+
+## Refit with stably selected variable
+Refit
+```{r}
+varSel_female_refit=Refit(ukb_female_x, ukb_female_y, family = "binomial", stability = varSel_female)
+varSel_breast_refit=Refit(ukb_breast_x, ukb_breast_y, family = "binomial", stability = varSel_breast)
+varSel_uterus_refit=Refit(ukb_uterus_x, ukb_uterus_y, family = "binomial", stability = varSel_uterus)
+varSel_ovary_refit=Refit(ukb_ovary_x, ukb_ovary_y, family = "binomial", stability = varSel_ovary)
+
+rm(ukb_female_x, ukb_female_y, ukb_female, ukb_breast_x, ukb_breast_y, ukb_breast, ukb_ovary_x, ukb_ovary_y, ukb_ovary, ukb_uterus_x, ukb_uterus_y, ukb_uterus, ukb)
+```
+Result of refit 
+```{r}
+varSel_female_coef = as.data.frame(varSel_female_refit$coefficients[-1])
+colnames(varSel_female_coef) = "coef_female"
+varSel_female_coef$var = rownames(varSel_female_coef)
+
+varSel_breast_coef = as.data.frame(varSel_breast_refit$coefficients[-1])
+colnames(varSel_breast_coef) = "coef_breast"
+varSel_breast_coef$var = rownames(varSel_breast_coef)
+
+varSel_uterus_coef = as.data.frame(varSel_uterus_refit$coefficients[-1])
+colnames(varSel_uterus_coef) = "coef_uterus"
+varSel_uterus_coef$var = rownames(varSel_uterus_coef)
+
+varSel_ovary_coef = as.data.frame(varSel_ovary_refit$coefficients[-1])
+colnames(varSel_ovary_coef) = "coef_ovary"
+varSel_ovary_coef$var = rownames(varSel_ovary_coef)
+rm(varSel_female_refit, varSel_breast_refit, varSel_uterus_refit, varSel_ovary_refit)
+```
+
+
+## Effect size of variables passing stability selection 
+```{r}
+# Merge selection proportion and effect size
+selprop$var = rownames(selprop)
+selprop = left_join(selprop, varSel_female_coef, by=c("var"="var"))
+selprop = left_join(selprop, varSel_breast_coef, by=c("var"="var"))
+selprop = left_join(selprop, varSel_uterus_coef, by=c("var"="var"))
+selprop = left_join(selprop, varSel_ovary_coef, by=c("var"="var"))
+rownames(selprop)=selprop$var
+selprop = selprop %>% select(-var)
+rm(varSel_female_coef, varSel_breast_coef, varSel_uterus_coef, varSel_ovary_coef)
+
+
+# Renames rownames
+rownames(selprop) = sub(".0.0", "", rownames(selprop))
+rownames(selprop) = gsub("_", " ", rownames(selprop))
+
+```
+
+
+## Labels variables passing stability selection (Data preparation for plot)
+```{r}
+## Create labels column only for selected variables
+selprop = selprop %>% mutate(var = rownames(selprop))
+selprop = selprop %>% mutate(label_female=ifelse(selprop_female >= smry_stab_lasso[1,2],var, ""))
+selprop = selprop %>% mutate(label_breast=ifelse(selprop_breast >= smry_stab_lasso[2,2],var, ""))
+selprop = selprop %>% mutate(label_uterus=ifelse(selprop_uterus >= smry_stab_lasso[3,2],var, ""))
+selprop = selprop %>% mutate(label_ovary=ifelse(selprop_ovary >= smry_stab_lasso[4,2], var, ""))
+selprop = selprop %>% mutate(label_breast_ovary = ifelse(selprop_breast >= smry_stab_lasso[2,2]|selprop_ovary >= smry_stab_lasso[4,2], var, ""))
+selprop = selprop %>% mutate(label_breast_uterus = ifelse(selprop_breast >= smry_stab_lasso[2,2]|selprop_uterus >= smry_stab_lasso[3,2], var, ""))
+selprop = selprop %>% mutate(label_uterus_ovary = ifelse(selprop_uterus >= smry_stab_lasso[3,2]|selprop_ovary >= smry_stab_lasso[4,2], var, ""))
+selprop$var = factor(selprop$var, levels=selprop$var)
+
+# Add group label
+selprop = selprop %>% mutate(group=c(rep("Demo", 5), rep("Female",8), rep("Environment", 2), rep("Lifestyle", 11), rep("Diet", 16),rep("PhyMeas", 3), rep("Biomarker",32)))
+
+## Create color groups based on variable groups
+selprop = selprop %>% mutate(color = recode(selprop$group, "Demo"="black", "Female"="pink", "Environment"="mediumseagreen", "Lifestyle"="orange", "Diet"="blue", "PhyMeas"="gold", "Biomarker"="olivedrab"))
+```
+
+
+
+```{r}
+# Write
+write.csv(selprop, "selprop.csv")
+```
+
+
+## Selection plot
+### Plot selection plot
+```{r, fig.width=10}
+# Female cancer
+par(mar=c(7,1,1,1))
+ggplot(data=selprop, aes(x=var, y=selprop_female)) + 
+  geom_col(width = 0.5, fill= ifelse(selprop$selprop_female>=smry_stab_lasso[1,2], "red", "grey")) + 
+  theme_classic()+
+  theme(axis.text.x.bottom = element_text(angle=45, size = 8, hjust=1, vjust = 1, color = selprop$color), plot.title = element_text(hjust = 0.5))+
+  geom_hline(yintercept = smry_stab_lasso[1,2], col = "red", linetype=2)+
+  labs(title="Stability selection(female cancer)", y="selection proportion")
+
+# Breast cancer
+par(mar=c(7,1,1,1))
+ggplot(data=selprop, aes(x=var, y=selprop_breast)) + 
+  geom_col(width = 0.5, fill= ifelse(selprop$selprop_breast>=smry_stab_lasso[2,2], "red", "grey")) + 
+  theme_classic()+
+  theme(axis.text.x.bottom = element_text(angle=45, size = 8, hjust=1, vjust = 1, color = selprop$color),
+        plot.title = element_text(hjust = 0.5))+
+  geom_hline(yintercept = smry_stab_lasso[2,2], col = "red", linetype=2)+
+  labs(title="Stability selection(breast cancer)", y="selection proportion")
+
+# Uterus cancer
+par(mar=c(7,1,1,1))
+ggplot(data=selprop, aes(x=var, y=selprop_uterus)) + 
+  geom_col(width = 0.5, fill= ifelse(selprop$selprop_uterus>=smry_stab_lasso[3,2], "red", "grey")) + 
+  theme_classic()+
+  theme(axis.text.x.bottom = element_text(angle=45, size = 8, hjust=1, vjust = 1, color = selprop$color),
+        plot.title = element_text(hjust = 0.5))+
+  geom_hline(yintercept = smry_stab_lasso[3,2], col = "red", linetype=2)+
+  labs(title="Stability selection(Uterus cancer)", y="selection proportion")
+
+# Ovary cancer
+par(mar=c(7,1,1,1))
+ggplot(data=selprop, aes(x=var, y=selprop_ovary)) + 
+  geom_col(width = 0.5, fill= ifelse(selprop$selprop_ovary>=smry_stab_lasso[4,2], "red", "grey")) + 
+  theme_classic()+
+  theme(axis.text.x.bottom = element_text(angle=45, size = 8, hjust=1, vjust = 1, color = selprop$color),
+        plot.title = element_text(hjust = 0.5))+
+  geom_hline(yintercept = smry_stab_lasso[4,2], col = "red", linetype=2)+
+  labs(title="Stability selection(Ovary cancer)", y="selection proportion")
+
+```
+
+## Plot for comparistion between different cancers 
+```{r}
+library(ggrepel)
+## Breast cancer vs Ovary cancer
+par(mar=c(2,6,2,6))
+ggplot(data = selprop) + 
+  geom_point(aes(y=selprop_ovary,x=selprop_breast, color = group)) + 
+  geom_text_repel(aes(y=selprop_ovary,x=selprop_breast,label=label_breast_ovary), size=3)+
+  theme_bw() + 
+  labs(x="Selection proportion(Breast cancer)", y="Selection proportion(Ovary cancer)", title="Stability selection Lasso(Breast cancer vs Ovary cancer)", color = NULL)+
+  theme(plot.title=element_text(hjust=0.5))+
+  geom_hline(yintercept = smry_stab_lasso[4,2], linetype=2)+
+  geom_vline(xintercept = smry_stab_lasso[2,2], linetype=2)+
+  scale_color_manual(values=c("Demo"="black", "Female"="pink", "Environment"="mediumseagreen", "Lifestyle"="orange", "Diet"="blue", "PhyMeas"="gold", "Biomarker"="olivedrab"))
+
+par(mar=c(2,6,2,6))
+ggplot(data = selprop) + 
+  geom_point(aes(y=coef_ovary, x=coef_breast, color = group)) + 
+  geom_text_repel(aes(y=coef_ovary, x=coef_breast, label=label_breast_ovary), size=3)+
+  theme_bw() + 
+  labs(x="Coefficient (Breast cancer)", y="Coefficient (Ovary cancer)", title="Coefficient (Breast cancer vs Ovary cancer)", color = NULL)+
+  theme(plot.title=element_text(hjust=0.5))+
+  geom_hline(yintercept = 0, linetype=2)+
+  geom_vline(xintercept = 0, linetype=2)+
+  geom_abline(slope = 1, linetype=3, color = "grey")+
+  geom_abline(slope = -1, linetype=3, color = "grey")+
+  scale_color_manual(values=c("Demo"="black", "Female"="pink", "Environment"="mediumseagreen", "Lifestyle"="orange", "Diet"="blue", "PhyMeas"="gold", "Biomarker"="olivedrab"))
+  
+```
+```{r}
+## Breast cancer vs Uterus cancer
+par(mar=c(2,6,2,6))
+ggplot(data = selprop) + 
+  geom_point(aes(y=selprop_uterus,x=selprop_breast, color=group)) + 
+  geom_text_repel(aes(y=selprop_uterus,x=selprop_breast,label=label_breast_uterus), size=3)+
+  theme_bw() + 
+  labs(x="Selection proportion(Breast cancer)", y="Selection proportion(Uterus cancer)", title="Stability selection Lasso(Breast cancer vs Uterus cancer)",color=NULL)+
+  theme(plot.title=element_text(hjust=0.5))+
+  geom_hline(yintercept = smry_stab_lasso[3,2], linetype=2)+
+  geom_vline(xintercept = smry_stab_lasso[2,2], linetype=2)
+
+par(mar=c(2,6,2,6))
+ggplot(data = selprop) + 
+  geom_point(aes(y=coef_uterus, x=coef_breast, color = group)) + 
+  geom_text_repel(aes(y=coef_uterus, x=coef_breast, label=label_breast_uterus), size=3)+
+  theme_bw() + 
+  labs(x="Coefficient (Breast cancer)", y="Coefficient (Uterus cancer)", title="Coefficient (Breast cancer vs Uterus cancer)", color = NULL)+
+  theme(plot.title=element_text(hjust=0.5))+
+  geom_hline(yintercept = 0, linetype=2)+
+  geom_vline(xintercept = 0, linetype=2)+
+  geom_abline(slope = 1, linetype=3, color = "grey")+
+  geom_abline(slope = -1, linetype=3, color = "grey")+
+  scale_color_manual(values=c("Demo"="black", "Female"="pink", "Environment"="mediumseagreen", "Lifestyle"="orange", "Diet"="blue", "PhyMeas"="gold", "Biomarker"="olivedrab"))
+
+```
+
+
+```{r}
+## Ovary cancer vs Uterus cancer
+par(mar=c(2,6,2,6))
+ggplot(data = selprop) + 
+  geom_point(aes(y=selprop_uterus,x=selprop_ovary, color=group)) + 
+  geom_text_repel(aes(y=selprop_uterus,x=selprop_ovary,label=label_uterus_ovary), size=3)+
+  theme_bw() + 
+  labs(x="Selection proportion(Ovary cancer)", y="Selection proportion(Uterus cancer)", title="Stability selection Lasso(Ovary cancer vs Uterus cancer)", color=NULL)+
+  theme(plot.title=element_text(hjust=0.5))+
+  geom_hline(yintercept = smry_stab_lasso[3,2], linetype=2)+
+  geom_vline(xintercept = smry_stab_lasso[4,2], linetype=2)
+
+par(mar=c(2,6,2,6))
+ggplot(data = selprop) + 
+  geom_point(aes(y=coef_uterus, x=coef_ovary, color = group)) + 
+  geom_text_repel(aes(y=coef_uterus, x=coef_ovary, label=label_uterus_ovary), size=3)+
+  theme_bw() + 
+  labs(x="Coefficient (Ovary cancer)", y="Coefficient (Uterus cancer)", title="Coefficient (Ovary cancer vs Uterus cancer)", color = NULL)+
+  theme(plot.title=element_text(hjust=0.5))+
+  geom_hline(yintercept = 0, linetype=2)+
+  geom_vline(xintercept = 0, linetype=2)+
+  geom_abline(slope = 1, linetype=3, color = "grey")+
+  geom_abline(slope = -1, linetype=3, color = "grey")+
+  scale_color_manual(values=c("Demo"="black", "Female"="pink", "Environment"="mediumseagreen", "Lifestyle"="orange", "Diet"="blue", "PhyMeas"="gold", "Biomarker"="olivedrab"))
+
+```
+
+
+## Heatmap with ggplot
+Data preparation
+Labels
+```{r}
+selprop_heatmap_label = selprop[,1:4]
+selprop_heatmap_label$selprop_female = ifelse(selprop_heatmap_label$selprop_female >= Argmax(varSel_female)[2], 1, 0)
+selprop_heatmap_label$selprop_breast = ifelse(selprop_heatmap_label$selprop_breast >= Argmax(varSel_breast)[2], 1, 0)
+selprop_heatmap_label$selprop_uterus = ifelse(selprop_heatmap_label$selprop_uterus >= Argmax(varSel_uterus)[2], 1, 0)
+selprop_heatmap_label$selprop_ovary = ifelse(selprop_heatmap_label$selprop_ovary >= Argmax(varSel_ovary)[2], 1, 0)
+selprop_heatmap_label = selprop_heatmap_label %>% filter(selprop_female!=0|selprop_breast!=0|selprop_uterus!=0|selprop_ovary!=0)
+colnames(selprop_heatmap_label) = c("Female", "Breast", "Uterus", "Ovary")
+
+selprop_heatmap_label  = selprop_heatmap_label  %>% pivot_longer(cols = colnames(selprop_heatmap_label),names_to = "subtype", values_to = "label")
+```
+
+Estimate(Refit)
+```{r}
+selprop_heatmap_est = selprop %>% filter(selprop_female >= Argmax(varSel_female)[2]|
+                                           selprop_breast >=Argmax(varSel_breast)[2]|
+                                           selprop_uterus >= Argmax(varSel_uterus)[2]|
+                                           selprop_ovary >= Argmax(varSel_ovary)[2])
+selprop_heatmap_est = selprop_heatmap_est[,5:8]
+colnames(selprop_heatmap_est) = c("Female", "Breast", "Uterus", "Ovary")
+selprop_heatmap_est = selprop_heatmap_est  %>% pivot_longer(cols = colnames(selprop_heatmap_est),names_to = "subtype", values_to = "est")
+```
+
+Merge data: label, estimate, selection proportion
+```{r}
+selprop_heatmap = selprop[,c("selprop_female", "selprop_breast", "selprop_uterus", "selprop_ovary", "group","color")]
+colnames(selprop_heatmap ) = c("Female", "Breast", "Uterus", "Ovary","group","color")
+selprop_heatmap$var = rownames(selprop_heatmap)
+selprop_heatmap = selprop_heatmap %>% filter(Female >= Argmax(varSel_female)[2]|
+                                               Breast >= Argmax(varSel_breast)[2]|
+                                               Uterus >= Argmax(varSel_uterus)[2]|
+                                               Ovary >= Argmax(varSel_ovary)[2])
+
+selprop_heatmap = selprop_heatmap %>% pivot_longer(cols = -c("group","var","color"), names_to = "subtype", values_to = "selprop")
+selprop_heatmap = cbind(selprop_heatmap, selprop_heatmap_label[,2])
+selprop_heatmap = cbind(selprop_heatmap, selprop_heatmap_est[,2])
+selprop_heatmap$var = factor(selprop_heatmap$var, levels = unique(selprop_heatmap$var))
+selprop_heatmap$subtype = factor(selprop_heatmap$subtype, levels = unique(selprop_heatmap$subtype))
+# selprop_heatmap = selprop_heatmap %>% mutate(color = recode(selprop_heatmap$Group, "Demo"="black", "Female"="pink", "Environment"="mediumseagreen", "Lifestyle"="orange", "Diet"="blue", "PhyMeas"="gold", "Biomarker"="olivedrab"))
+```
+
+Plot heatmap
+```{r}
+ggplot(selprop_heatmap, aes(x = subtype, y = var, fill = selprop)) +
+  geom_tile() +
+  geom_text(aes(label = ifelse(label==1, selprop, "")), size=3, color = "navy")+
+  scale_fill_gradient2(low = "white", high = "red") +
+  theme_classic()+
+  labs(x="", y="", title="Selection proportion by stability selection lasso", fill = "Sele Prop")+
+  theme(axis.text.y = element_text(size = 8, hjust=1, vjust = 0.5, color = selprop_heatmap$color[seq(1, length(selprop_heatmap$color), 4)]), plot.title = element_text(hjust = 0.5))
+
+ggplot(selprop_heatmap, aes(x = subtype, y = var, fill = est)) +
+  geom_tile() +
+  geom_text(aes(label = ifelse(label==1, round(est,2), "")), size=3, color = "navy")+
+  scale_fill_gradient2(low = "blue", mid ="white", high = "red") +
+  theme_classic()+
+  labs(x="", y="", title="Effect size of stably selected variables", fill = "Effect size")+
+  theme(axis.text.y = element_text(size = 8, hjust=1, vjust = 0.5, color = selprop_heatmap$color[seq(1, length(selprop_heatmap$color), 4)]), plot.title = element_text(hjust = 0.5))
+
+rm(selprop_heatmap_label, selprop_heatmap_est, selprop_heatmap)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
