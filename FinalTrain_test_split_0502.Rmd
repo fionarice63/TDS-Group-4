@@ -1,0 +1,85 @@
+---
+title: "Train_test_split"
+author: "Siwei Wu" FINAL version 40:30:30 Varsel:train:test
+date: "2023/5/2"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+ukb = readRDS("./ukb_0501.rds")
+```
+
+```{r}
+ukb_control = ukb %>% filter(femalecancer_incident_case == 0)
+ukb_breast = ukb %>% filter(breast_incident_case == 1)
+ukb_uterus = ukb %>% filter(uterus_incident_case == 1)
+ukb_ovary = ukb %>% filter(ovary_incident_case == 1)
+```
+
+split
+```{r}
+set.seed(123)
+# control
+control_varsel_id <- sample(1:nrow(ukb_control), size = 0.4*nrow(ukb_control))
+ukb_control_varsel = ukb_control[control_varsel_id, ]
+dum_control = ukb_control[-control_varsel_id,]
+
+control_varsel_id2 <- sample(1:nrow(dum_control), size = 0.5*nrow(dum_control))
+
+ukb_control_train = dum_control[control_varsel_id2, ]
+ukb_control_test = dum_control[-control_varsel_id2,]
+
+# breast
+breast_varsel_id <- sample(1:nrow(ukb_breast), size = 0.4*nrow(ukb_breast))
+ukb_breast_varsel = ukb_breast[breast_varsel_id, ]
+dum_breast = ukb_breast[-breast_varsel_id,]
+
+breast_varsel_id2 <- sample(1:nrow(dum_breast), size = 0.5*nrow(dum_breast))
+
+ukb_breast_train = dum_breast[breast_varsel_id2, ]
+ukb_breast_test = dum_breast[-breast_varsel_id2,]
+
+# uterus
+uterus_varsel_id <- sample(1:nrow(ukb_uterus), size = 0.4*nrow(ukb_uterus))
+ukb_uterus_varsel = ukb_uterus[uterus_varsel_id, ]
+dum_uterus = ukb_uterus[-uterus_varsel_id,]
+
+uterus_varsel_id2 <- sample(1:nrow(dum_uterus), size = 0.5*nrow(dum_uterus))
+
+ukb_uterus_train = dum_uterus[uterus_varsel_id2, ]
+ukb_uterus_test = dum_uterus[-uterus_varsel_id2,]
+
+# ovary
+
+
+ovary_varsel_id <- sample(1:nrow(ukb_ovary), size = 0.4*nrow(ukb_ovary))
+ukb_ovary_varsel = ukb_ovary[ovary_varsel_id, ]
+dum_ovary = ukb_ovary[-ovary_varsel_id,]
+
+ovary_varsel_id2 <- sample(1:nrow(dum_ovary), size = 0.5*nrow(dum_ovary))
+
+ukb_ovary_train = dum_ovary[ovary_varsel_id2, ]
+ukb_ovary_test = dum_ovary[-ovary_varsel_id2,]
+
+```
+
+
+```{r}
+ukb_varsel = rbind(ukb_control_varsel, ukb_breast_varsel, ukb_uterus_varsel, ukb_ovary_varsel)
+ukb_train = rbind(ukb_control_train, ukb_breast_train, ukb_uterus_train, ukb_ovary_train)
+
+ukb_test = rbind(ukb_control_test, ukb_breast_test, ukb_uterus_test, ukb_ovary_test)
+saveRDS(ukb_varsel, "ukb_varsel_0501.rds")
+saveRDS(ukb_train, "ukb_train_0501.rds")
+saveRDS(ukb_test, "ukb_test_0501.rds")
+rm(ukb_breast, ukb_breast_test, ukb_breast_train)
+rm(ukb_ovary, ukb_ovary_test, ukb_ovary_train)
+rm(ukb_uterus, ukb_uterus_test, ukb_uterus_train)
+rm(ukb_control, ukb_control_test, ukb_control_train)
+rm(ukb, ukb_train, ukb_test)
+```
+
