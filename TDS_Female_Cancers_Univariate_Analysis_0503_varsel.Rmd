@@ -1,0 +1,406 @@
+---
+title: "TDS_Female cancers"
+author: "Siwei Wu"
+date: "2023/2/10"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Pre-analysis
+set working directory and load packages
+```{r}
+# set up working directory
+# rm(list=ls())
+path <- dirname(rstudioapi::getActiveDocumentContext()$path)
+setwd(path)
+
+# load packages
+library(tidyverse)
+library(dplyr)
+library(RColorBrewer)
+rm(path)
+
+# Read in dataset 
+ukb = readRDS("ukb_varsel_0501.rds")
+```
+
+## Data preparation
+Transform factors to ordinal variables
+```{r}
+# Re-code Sleep_snoring.0.0 and Female_Ever_use_HRT.0.0 (binary variables)
+ukb$Sleep_snoring.0.0 = ifelse(ukb$Sleep_snoring.0.0=="No", 0, 1)
+ukb$Female_Ever_use_HRT.0.0 = ifelse(ukb$Female_Ever_use_HRT.0.0=="No", 0, 1)
+
+# Select factor variables
+ukb_cate= ukb %>% select(eid, is.factor)
+
+# Transform factors into ordinal variables
+ukb_ordinal = as.data.frame(lapply(ukb_cate, as.numeric))
+ukb_ordinal
+  
+# Select non factor variables
+ukb_nonfactor = ukb %>% select(-is.factor)
+ukb_nonfactor$eid = as.numeric(ukb$eid)
+
+# Merge
+ukb = inner_join(ukb_ordinal, ukb_nonfactor)
+```
+
+```{r}
+## factor binary variables(only for uni-variate variables)
+ukb$Sleep_snoring.0.0 = factor(ukb$Sleep_snoring.0.0)
+ukb$Mother_breast_cancer = factor(ukb$Mother_breast_cancer)
+ukb$Female_Menopause_no = factor(ukb$Female_Menopause_no )
+ukb$Female_Menopause_unsure = factor(ukb$Female_Menopause_unsure)
+ukb$Female_Menopause_yes = factor(ukb$Female_Menopause_yes)
+ukb$Female_Ever_use_HRT.0.0 = factor(ukb$Female_Ever_use_HRT.0.0)
+ukb$Employment_no_or_cnt_wk = factor(ukb$Employment_no_or_cnt_wk)
+ukb$Employment_unpaid_wk_or_funded = factor(ukb$Employment_unpaid_wk_or_funded)
+ukb$Employment_paid_or_sf_emply = factor(ukb$Employment_paid_or_sf_emply )
+rm(ukb_cate, ukb_ordinal, ukb_nonfactor)
+```
+
+Data preparation
+```{r}
+rownames(ukb) = ukb$eid
+ukb = ukb %>% select(-eid)
+
+# Re-arrange the  variables
+## Biochemical metrics
+sex_horm = c("Bio_shbg.0.0","Bio_testosterone.0.0")
+glucose = c("Bio_glucose.0.0", "Bio_glycated_haemoglobin.0.0", "Bio_igf_1.0.0")
+liver = c("Bio_alkaline_phosphate.0.0", "Bio_alanine_aminotransferase.0.0", "Bio_aspartate_aminotransferase.0.0", "Bio_direct_bilirubin.0.0", "Bio_gamma_glutamyltransferase.0.0", "Bio_total_bilirubin.0.0")
+lipid = c("Bio_apolipoprotein_a.0.0", "Bio_apolipoprotein_b.0.0", "Bio_cholesterol.0.0", "Bio_hdl_cholesterol.0.0", "Bio_ldl_direct.0.0", "Bio_lipoprotein_a.0.0", "Bio_triglycerides.0.0")
+nutrit = c("Bio_albumin.0.0", "Bio_total_protein.0.0")
+inflam = c("Bio_c_reac_protein.0.0")
+urate = c("Bio_urate.0.0")
+skeleton = c("Bio_calcium.0.0", "Bio_phosphate.0.0", "Bio_vitamin_d.0.0")
+kidney = c("Bio_urea.0.0", "Bio_creatinine.0.0", "Bio_cystatin_c.0.0")
+
+## Physical Measurement, environment, and demographic variables
+# PhyMeas = c("phyMeas_SBP", "phyMeas_DBP", "PhyMeas_waist_cir.0.0", "PhyMeas_BMI.0.0")
+PhyMeas = c("PhyMeas_BMI.0.0", "phyMeas_SBP", "phyMeas_DBP")
+demo = c("Age_enrollment.0.0", "income_household.0.0", "Education","Employment_no_or_cnt_wk","Employment_paid_or_sf_emply","Employment_unpaid_wk_or_funded")
+PhyAC = c("Days_WK_PhyAc.0.0")
+envir = c("no2_air_pol.0.0","no_air_pol.0.0")
+
+ukb = ukb %>% select(
+  all_of(demo), 
+  starts_with("Female_"), 
+  starts_with("Mother_"), 
+  envir, 
+  PhyAC,
+  starts_with("Sleep_"), 
+  starts_with("Smoke_"), 
+  starts_with("Alcohol_"), 
+  starts_with("Diet_"), 
+  all_of(PhyMeas),
+  all_of(sex_horm), 
+  all_of(glucose), 
+  all_of(liver), 
+  all_of(lipid), 
+  all_of(nutrit), 
+  all_of(inflam), 
+  all_of(urate), 
+  all_of(skeleton), 
+  all_of(kidney), 
+  starts_with("Urine_"),
+  breast_incident_case,
+  uterus_incident_case, 
+  ovary_incident_case, 
+  # others_incident_case, 
+  femalecancer_incident_case)
+
+rm(PhyMeas, demo, envir, sex_horm, glucose, liver, lipid, nutrit, inflam, urate, skeleton, kidney)
+```
+
+
+# Univariate analysis
+## Preparation for analysis: function for uni-variate analysis
+```{r}
+# df is a data.frame with 2:k-1 columns as exposures, column 1 as the age of enrollment to be adjusted, and column k as the outcome (femalecancer_incident_case)
+# logit_df is the data.frame for Manhattan plot you can leave it as default if you don't need to plot different groups of exposures on the same Manhattan plot 
+uni_var_anly = function(df, logit_df = matrix(NA,0,4)){
+  colnames(logit_df) = c("Estimate", "P value", "2.5%", "97.5%")
+  df_varname = colnames(df[,2:(dim(df)[2]-1)])
+  df_varname = sub('.0.0', '', df_varname)
+  df_varname = gsub('_', ' ', df_varname)
+  # Perform uni-variate analysis
+  for(i in 2:(dim(df)[2]-1)){
+    logit = glm(df[,dim(df)[2]] ~ Age_enrollment.0.0 + df[,i], df, family = binomial)
+    logit_result = cbind(summary(logit)$coefficient[-1:-2, 1], max(summary(logit)$coefficient[-1:-2, 4],2e-16), confint.default(logit)[-1:-2,1], confint.default(logit)[-1:-2,2])
+    row.names(logit_result) = paste0(df_varname[i-1])
+    # row.names(logit_result) = paste0(df_varname[i-1],": ", levels(df[,i])[-1])
+    #, " vs ", levels(df[,i])[1])
+    logit_df = rbind(logit_df, logit_result)
+  }
+  return(logit_df)
+}
+```
+
+## Preparation for analysis: function for manhattan_plot(bonferroni) (one subtype)
+```{r}
+# logit_df as the output of uni-variate analysis function 
+# main as the title of your Manhattan_plot
+manhattan_plot_BF = function(logit_df, main){
+  MyPal = brewer.pal("Paired", n = 12)
+  par(mar=c(7, 0.5, 2, 0.5))
+  plot(-log10(logit_df[, 2]), pch = 20, col = ifelse(logit_df[, 1] < 0, yes = MyPal[2], no = MyPal[8]), xaxt = "n", ylab = expression(-log[10](italic(p))), xlab = "", las = 1, ylim = c(min(c(-log10(logit_df[,2]))), max(c(-log10(logit_df[,2])))), main = main)
+  abline(h = -log10(0.05/dim(logit_df)[1]), col = "red")
+  abline(h = -log10(0.05), col="navy")
+  abline(v = seq(1,(dim(logit_df)[1])), lty = 3, col = "grey")
+  axis(1, at = 1:(dim(logit_df)[1]), ifelse(logit_df[, 1] < 0, yes = gsub('[.0.0]', '', rownames(logit_df)),no = ""), las = 2, col.axis = MyPal[2], cex.axis=0.5)
+  axis(1, at = 1:(dim(logit_df)[1]), ifelse(logit_df[, 1] < 0, yes = "", gsub('[.0.0]', '', rownames(logit_df))), las = 2, col.axis = MyPal[8], cex.axis=0.5)
+  legend("topleft", xpd=TRUE, legend = c(paste("Negative", expression(beta)), paste("Positive",expression(beta))), pch = c(19, 19),col = c(MyPal[2], MyPal[8]), cex = 0.5)
+  legend("topright", xpd=TRUE, legend = c("Bonferroni", "P=0.05"),lty = 1, lwd = 3, col = c("red","navy"), cex = 0.5)
+  }
+```
+
+## Preparation for analysis: function for manhattan_plot(BH)(one subtype)
+```{r}
+manhattan_plot_BH = function(logit_df, main){
+  MyPal = brewer.pal("Paired", n = 12)
+  par(mar=c(7, 0.5, 2, 0.5))
+  # plot(-log10(logit_df[, 2]), pch = 20, col = ifelse(logit_df[, 1] < 0, yes = MyPal[2], no = MyPal[8]), xaxt = "n", ylab = expression(-log[10](italic(p))), xlab = "", las = 1, ylim = c(min(c(-log10(logit_df[,2]))), sort(c(-log10(logit_df[,2])), decreasing = TRUE)[3]), main = main)
+  plot(-log10(logit_df[, 3]), pch = 20, col = ifelse(logit_df[, 1] < 0, yes = MyPal[2], no = MyPal[8]), xaxt = "n", ylab = expression(-log[10](italic(p))), xlab = "", las = 1, ylim = c(min(c(-log10(logit_df[,3]))), max(c(-log10(logit_df[,3])))), main = main)
+  # par(new= TRUE)
+  # plot(-log10(logit_df[,3]), pch = 18,  col = "red", xlab = "", ylab = "", xaxt = "n")
+  # abline(h = -log10(0.05/dim(logit_df)[1]), col = "red")
+  abline(h = -log10(0.05), col="navy")
+  abline(v = seq(1,(dim(logit_df)[1])), lty = 3, col = "grey")
+  axis(1, at = 1:(dim(logit_df)[1]), ifelse(logit_df[, 1] < 0, yes = gsub('[.0.0]', '', rownames(logit_df)),no = ""), las = 2, col.axis = MyPal[2], cex.axis=0.5)
+  axis(1, at = 1:(dim(logit_df)[1]), ifelse(logit_df[, 1] < 0, yes = "", gsub('[.0.0]', '', rownames(logit_df))), las = 2, col.axis = MyPal[8], cex.axis=0.5)
+  legend("topleft", xpd=TRUE, legend = c(paste("Negative", expression(beta)), paste("Positive",expression(beta))), pch = c(19, 19),col = c(MyPal[2], MyPal[8]), cex = 0.5)
+  # legend("topright", xpd=TRUE, legend = c("P=0.05"),lty = 1, lwd = 3, col = c("red","navy"), cex = 0.5)
+  }
+```
+
+## Uni-variate analysis 
+### Uni-variate analysis on femalecancer_incident_case
+```{r}
+ukb_female = ukb %>% select(-ovary_incident_case, -uterus_incident_case, -breast_incident_case)
+# ukb_female = ukb %>% select(-ovary_incident_case, -uterus_incident_case, -others_incident_case, -breast_incident_case)
+# Factor Outcome
+ukb_female$femalecancer_incident_case = factor(ukb_female$femalecancer_incident_case)
+```
+
+```{r}
+ukb_female_logit = uni_var_anly(ukb_female, ) 
+ukb_female_logit = as.data.frame(ukb_female_logit)
+ukb_female_logit = ukb_female_logit %>% mutate(P_val_BH = p.adjust(ukb_female_logit$`P value`, method="BH"))
+```
+
+### Uni-variate analysis on breast_incident_case
+```{r}
+ukb_breast = ukb %>% filter(uterus_incident_case == 0 | breast_incident_case==1) %>% 
+  filter(ovary_incident_case == 0 | breast_incident_case==1) %>% 
+  # filter(others_incident_case == 0| breast_incident_case==1) %>% 
+  select(-ovary_incident_case, -uterus_incident_case,-femalecancer_incident_case) 
+  # select(-ovary_incident_case, -uterus_incident_case, -others_incident_case,-femalecancer_incident_case) 
+
+# Factor Outcome
+ukb_breast$breast_incident_case = factor(ukb_breast$breast_incident_case)
+```
+
+```{r}
+ukb_breast_logit = uni_var_anly(ukb_breast, ) 
+ukb_breast_logit = as.data.frame(ukb_breast_logit)
+ukb_breast_logit = ukb_breast_logit %>% mutate(P_val_BH = p.adjust(ukb_breast_logit$`P value`, method="BH"))
+```
+
+### Uni-variate analysis on ovary_incident_case
+```{r}
+ukb_ovary = ukb %>% 
+  filter(uterus_incident_case == 0 | ovary_incident_case == 1 ) %>% 
+  filter(breast_incident_case == 0 | ovary_incident_case == 1 ) %>% 
+  # filter(others_incident_case == 0 | ovary_incident_case == 1 ) %>% 
+  select(-breast_incident_case, -uterus_incident_case,-femalecancer_incident_case) 
+  # select(-breast_incident_case, -uterus_incident_case, -others_incident_case,-femalecancer_incident_case)
+
+# Factor Outcome
+ukb_ovary$ovary_incident_case = factor(ukb_ovary$ovary_incident_case)
+```
+
+```{r}
+ukb_ovary_logit = uni_var_anly(ukb_ovary, ) 
+ukb_ovary_logit = as.data.frame(ukb_ovary_logit)
+ukb_ovary_logit = ukb_ovary_logit %>% mutate(P_val_BH = p.adjust(ukb_ovary_logit$`P value`, method="BH")) 
+```
+
+### Uni-variate analysis on uterus_incident_case
+```{r}
+ukb_uterus = ukb %>% filter(breast_incident_case == 0 | uterus_incident_case==1) %>% 
+  filter(ovary_incident_case == 0| uterus_incident_case==1) %>% 
+  # filter(others_incident_case == 0| uterus_incident_case==1) %>% 
+  select(-ovary_incident_case, -breast_incident_case,-femalecancer_incident_case)
+  # select(-ovary_incident_case, -breast_incident_case, -others_incident_case,-femalecancer_incident_case)
+
+# Factor Outcome
+ukb_uterus$uterus_incident_case = factor(ukb_uterus$uterus_incident_case)
+```
+
+```{r}
+ukb_uterus_logit = uni_var_anly(ukb_uterus, ) 
+ukb_uterus_logit = as.data.frame(ukb_uterus_logit)
+ukb_uterus_logit = ukb_uterus_logit %>% mutate(P_val_BH = p.adjust(ukb_uterus_logit$`P value`, method="BH"))
+```
+
+### Univariate analysis on others_incident_case
+```{r}
+# ukb_others = ukb %>% filter(breast_incident_case == 0 | others_incident_case ==1) %>% filter(ovary_incident_case == 0 | others_incident_case ==1) %>% filter(uterus_incident_case == 0| others_incident_case ==1) %>% select(-ovary_incident_case, -breast_incident_case, -uterus_incident_case, -femalecancer_incident_case)
+# 
+# # Factor Outcome
+# ukb_others$others_incident_case = factor(ukb_others$others_incident_case)
+
+```
+
+```{r}
+# ukb_others_logit = uni_var_anly(ukb_others, "", ) 
+# ukb_others_logit = as.data.frame(ukb_others_logit)
+# ukb_others_logit = ukb_others_logit %>% mutate(P_val_BH = p.adjust(ukb_others_logit$`P value`, method="BH")) %>% select(-c("2.5%",  "97.5%")) 
+```
+
+```{r}
+ukb_univar = cbind(ukb_female_logit, ukb_breast_logit, ukb_uterus_logit, ukb_ovary_logit)
+colnames(ukb_univar) = c("Female_Estimate", "Female_P_value", "Female_2.5%", "Female_97.5%", "Female_P_val_BH", 
+                        "Breast_Estimate", "Breast_P_value", "Breast_2.5%", "Breast_97.5%", "Breast_P_val_BH", 
+                        "Uterus_Estimate", "Uterus_P_value", "Uterus_2.5%", "Uterus_97.5%", "Uterus_P_val_BH", 
+                        "Ovary_Estimate", "Ovary_P_value", "Ovary_2.5%", "Ovary_97.5%","Ovary_P_val_BH")
+
+ukb_univar$var = rownames(ukb_univar)
+ukb_univar = ukb_univar %>% mutate(group=c(rep("Demo", 5), rep("Female",8), rep("Environment", 2), rep("Lifestyle", 11), rep("Diet", 16),rep("PhyMeas", 3), rep("Biomarker",32)))
+ukb_univar = ukb_univar %>% mutate(color = recode(group, "Demo"="black", "Female"="pink", "Environment"="mediumseagreen", "Lifestyle"="orange", "Diet"="blue", "PhyMeas"="gold", "Biomarker"="olivedrab"))
+write.csv(ukb_univar, "ukb_univar.csv")
+rm(ukb_female_logit, ukb_breast_logit, ukb_uterus_logit, ukb_ovary_logit)
+```
+
+
+# Plot 
+## Pheatmap for uni-variate analysis:
+### Plot Pheatmap with base R
+```{r}
+# ukb_univar_heatmap = ukb_univar %>% select(Female_P_val_BH, Breast_P_val_BH, Uterus_P_val_BH, Ovary_P_val_BH)
+# ukb_univar_heatmap = ukb_univar_heatmap %>% filter(Female_P_val_BH<=0.05|Breast_P_val_BH<=0.05|Uterus_P_val_BH<=0.05|Ovary_P_val_BH<=0.05)
+# colnames(ukb_univar_heatmap) = c("Female cancer", "Breast cancer", "Uterus cancer", "Ovary cancer") 
+# ukb_univar_heatmap = ifelse(ukb_univar_heatmap>= -log10(0.05),1,0)
+# ukb_univar_heatmap = -log10(ukb_univar_heatmap)
+# pheatmap(t(ukb_univar_heatmap), cluster_rows = FALSE, cluster_cols = FALSE, fontsize_row = 6, fontsize_col = 6, main ="Univariate analysis(B-H adjusted)", color=c("grey","red"), legend_breaks = 0.5, legend_labels = c("P=0.05"))
+```
+
+### Plot pheatmap with ggplot2
+Data preparation for pheatmap:
+```{r}
+ukb_univar_heatmap = ukb_univar %>% select(Female_P_val_BH, Breast_P_val_BH, Uterus_P_val_BH, Ovary_P_val_BH, group, color)
+ukb_univar_heatmap = ukb_univar_heatmap %>% filter(Female_P_val_BH<=0.05|Breast_P_val_BH<=0.05|Uterus_P_val_BH<=0.05|Ovary_P_val_BH<=0.05)
+colnames(ukb_univar_heatmap) = c("Female cancer", "Breast cancer", "Uterus cancer", "Ovary cancer", "group", "color") 
+ukb_univar_heatmap$`Female cancer` = -log10(ukb_univar_heatmap$`Female cancer`)
+ukb_univar_heatmap$`Breast cancer` = -log10(ukb_univar_heatmap$`Breast cancer`)
+ukb_univar_heatmap$`Uterus cancer` = -log10(ukb_univar_heatmap$`Uterus cancer`)
+ukb_univar_heatmap$`Ovary cancer` = -log10(ukb_univar_heatmap$`Ovary cancer`)
+                                            
+ukb_univar_heatmap$var = rownames(ukb_univar_heatmap)
+
+ukb_univar_heatmap = ukb_univar_heatmap %>% pivot_longer(cols = -c("var","group","color"), values_to = "P_value", names_to = "subtype")
+
+```
+
+```{r}
+ukb_univar_heatmap_est = ukb_univar  %>% 
+  filter(Female_P_val_BH<=0.05|Breast_P_val_BH<=0.05|Uterus_P_val_BH<=0.05|Ovary_P_val_BH<=0.05) %>%
+  select(Female_Estimate, Breast_Estimate, Uterus_Estimate, Ovary_Estimate)
+colnames(ukb_univar_heatmap_est) = c("Female cancer", "Breast cancer", "Uterus cancer", "Ovary cancer")
+ukb_univar_heatmap_est$var = rownames(ukb_univar_heatmap_est)
+ukb_univar_heatmap_est = ukb_univar_heatmap_est %>% pivot_longer(cols = -var, values_to = "Estimate", names_to = "subtype")
+```
+
+```{r}
+ukb_univar_heatmap = inner_join(ukb_univar_heatmap, ukb_univar_heatmap_est, by = c("var" = "var", "subtype" = "subtype"))
+ukb_univar_heatmap$var = factor(ukb_univar_heatmap$var, levels=unique(ukb_univar_heatmap$var))
+ukb_univar_heatmap$subtype = factor(ukb_univar_heatmap$subtype, levels = unique(ukb_univar_heatmap$subtype))
+```
+
+Plot heatmap with ggplot2(geom_tile)
+```{r, fig.height = 6, fig.width = 8}
+ggplot(ukb_univar_heatmap, aes(x = subtype, y = var, fill = P_value*sign(Estimate))) +
+  geom_tile() +
+  geom_text(aes(label = ifelse(P_value >= -log10(0.05), round(sign(Estimate)*P_value,2), "")), size=3, color = "navy")+
+  scale_fill_gradient2(low = "#FFD699", mid="white" , high = "#9966CC") +
+  theme_classic()+
+  labs(x="", y="", title="FDR for uni-variate analysis", fill = "Sign(β)*-log(P)")+
+  theme(axis.text.y = element_text(size = 8, hjust=1, vjust = 0.5, color = ukb_univar_heatmap$color[seq(1, length(ukb_univar_heatmap$color), 4)]), plot.title = element_text(hjust = 0.5) )
+
+# rm(ukb_univar_heatmap_est, ukb_univar_heatmap)
+```
+
+
+
+## Manhattan plot
+```{r}
+# # Data preparation
+# ukb_uterus_logit = ukb_uterus_logit %>% select(-c("2.5%",  "97.5%")) 
+# ukb_ovary_logit = ukb_ovary_logit %>% select(-c("2.5%",  "97.5%")) 
+# ukb_breast_logit = ukb_breast_logit %>% select(-c("2.5%",  "97.5%"))
+# ukb_female_logit = ukb_female_logit %>% select(-c("2.5%",  "97.5%")) 
+
+```
+
+```{r}
+# manhattan_plot_BF(ukb_breast_logit,"Breast cancer(bonferroni)")
+# manhattan_plot_BH(ukb_breast_logit,"Breast cancer(BH adjusted)")
+```
+
+```{r}
+# manhattan_plot_BF(ukb_ovary_logit,"Ovary cancer(bonferroni)")
+# manhattan_plot_BH(ukb_ovary_logit,"Ovary cancer(BH adjusted)")
+```
+
+```{r}
+# manhattan_plot_BF(ukb_uterus_logit,"Uterus cancer(bonferroni)")
+# manhattan_plot_BH(ukb_uterus_logit,"Uterus cancer(BH adjusted)")
+```
+
+```{r}
+# manhattan_plot_BF(ukb_female_logit,"Female cancer(bonferroni)")
+# manhattan_plot_BH(ukb_female_logit,"Female cancer(BH adjusted)")
+```
+
+```{r}
+# manhattan_plot_BF(ukb_others_logit,"Other female genital cancer")
+# manhattan_plot_BH(ukb_others_logit,"Other female genital cancer(BH)")
+```
+
+
+### Plot primary analysis and subtype(breast cancer, ovary cancer, and uterus cancer) in ont plot
+```{r}
+# ## Pre-processing data
+# cancer = cbind(ukb_female_logit[,3], ukb_breast_logit[,3], ukb_uterus_logit[,3], ukb_ovary_logit[,3])
+# rownames(cancer) = rownames(ukb_breast_logit)
+# colnames(cancer) = c("Female_cancer", "Breast_cancer", "Uterus_cancer", "Ovary_cancer")
+# cancer = as.data.frame(cancer)
+# cancer_plot = cancer %>% filter(Female_cancer < 0.05 | Breast_cancer< 0.05 | Uterus_cancer< 0.05 |Ovary_cancer< 0.05)
+# 
+# ## Plot Manhattan plot
+# MyPal = brewer.pal("Paired", n = 12)
+# y_lowerbound = min(-log10(cancer_plot))
+# y_upperbound = max(-log10(cancer_plot))
+# par(mar=c(9, 0.5, 2, 0.5))
+# plot(-log10(cancer_plot[, 1]), pch = 18, col = MyPal[8], xaxt = "n", ylab = "", xlab = "", 
+#      las = 1, ylim = c(y_lowerbound, y_upperbound))
+# par(new= TRUE)
+# plot(-log10(cancer_plot[, 2]), pch = 20, col = MyPal[3], xaxt = "n", ylab = "", xlab = "", 
+#      las = 1, ylim = c(y_lowerbound, y_upperbound))
+# par(new= TRUE)
+# plot(-log10(cancer_plot[, 3]), pch = 20, col = MyPal[2], xaxt = "n", ylab = "", xlab = "", 
+#      las = 1, ylim = c(y_lowerbound, y_upperbound))
+# par(new= TRUE)
+# plot(-log10(cancer_plot[, 4]), pch = 20, col = MyPal[5], xaxt = "n", ylab = expression(-log[10](italic(p))), xlab = "", 
+#      las = 1, ylim = c(y_lowerbound, y_upperbound), main = "Manhattan plot")
+# abline(h = -log10(0.05), col="navy")
+# axis(1, at = 1:(dim(cancer_plot)[1]), rownames(cancer_plot), las = 2, col.axis = "navy", cex.axis=0.8)
+# legend("topleft", xpd=TRUE, legend = c("Female", "Breast", "Uterus", "Ovary"), pch = c(18, 20, 20, 20), col = c(MyPal[8], MyPal[3], MyPal[2], MyPal[5]), cex = 0.6)
+
+```
+
