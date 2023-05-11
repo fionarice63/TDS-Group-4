@@ -22,11 +22,11 @@ Running the Scripts
 Clone this repository to your local machine.
 Ensure you have R version 4.2.2 installed along with the necessary packages (glm, SHAP, glmnet, MatchIt, MICE).
 Navigate to the scripts/ directory and run the scripts in the following order:
-00_data_preprocessing.R
-01_exploratory_data_analysis.R
-02_variable_selection.R
-03_model_building.R
-04_model_evaluation.R
+00_preprocessing.rmd
+01_test_train_split.rmd
+02_preanalysis.rmd
+03_univariate_analysis.rmd
+04_stability_selection.rmd
 
 
 Results
