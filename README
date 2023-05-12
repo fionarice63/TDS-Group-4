@@ -23,7 +23,7 @@ Navigate to the scripts/ directory and run the scripts in the following order:
 02_preanalysis.rmd
 03_univariate_analysis.rmd
 04_stability_selection.rmd
-
+05_prediction.Rmd
 
 Results
 This research contributes to a deeper understanding of the risk factors implicated in the development of female cancers. The predictive models built in this study have practical implications for early detection and prevention initiatives, leading to more focused and efficacious screening and prevention strategies.
