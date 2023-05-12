@@ -28,14 +28,14 @@ Navigate to the scripts/ directory and run the scripts in the following order:
 ## Results
 This research contributes to a deeper understanding of the risk factors implicated in the development of female cancers. The predictive models built in this study have practical implications for early detection and prevention initiatives, leading to more focused and efficacious screening and prevention strategies.
 
-Contact
+## Contact
 
-For any questions or feedback, please feel free to contact us.
+For any questions or feedback, please feel free to contact us:
 
-seth.howes22@imperial.ac.uk
-constance.bicanic-popovic22@imperial.ac.uk
-siwei.wu22@imperial.ac.uk
-fiona.rice22@imperial.ac.uk
+* seth.howes22@imperial.ac.uk
+* constance.bicanic-popovic22@imperial.ac.uk
+* siwei.wu22@imperial.ac.uk
+* fiona.rice22@imperial.ac.uk
 
 
 
